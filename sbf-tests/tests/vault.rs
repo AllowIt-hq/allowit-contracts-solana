@@ -579,7 +579,7 @@ fn minimal_native_adapter_matches_borsh_requests_and_every_kernel_decision() {
                         now,
                         binding: [42; 32],
                     };
-                    let expected = policy::evaluate(&value.context());
+                    let expected = policy::execute(&value.context());
                     let ix = Instruction {
                         program_id: f.policy,
                         accounts: vec![],
@@ -621,7 +621,7 @@ fn minimal_native_adapter_matches_borsh_requests_and_every_kernel_decision() {
         assert_eq!(d.binding, [7; 32]);
         assert_eq!(
             d.error,
-            policy::validate_daily_limit(limit)
+            policy_api::validate_daily_limit(limit)
                 .err()
                 .map(|e| e as u32)
                 .unwrap_or(0)
