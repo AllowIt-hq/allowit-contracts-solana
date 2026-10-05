@@ -1,0 +1,9 @@
+[package]
+name = "allowit-interface"
+version = "0.1.0"
+edition = "2021"
+license = "UNLICENSED"
+[features]
+stellar = []
+[dependencies]
+borsh.workspace = true

@@ -1,0 +1,14 @@
+[workspace]
+members = ["crates/interface", "programs/policy", "programs/vault"]
+exclude = ["sbf-tests"]
+resolver = "2"
+[workspace.dependencies]
+solana-program = "=2.3.0"
+borsh = { version = "=1.6.0", features = ["derive"] }
+allowit-interface = { path = "crates/interface" }
+[profile.release]
+overflow-checks = true
+lto = true
+codegen-units = 1
+[profile.dev]
+debug = 0
