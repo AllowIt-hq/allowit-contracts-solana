@@ -27,11 +27,11 @@ fn process_instruction(_: &Address, accounts: &mut [AccountView], data: &[u8]) -
                 spent_day: word(data, 26),
                 now: word(data, 34),
             };
-            (&data[42..74], policy::evaluate(&context))
+            (&data[42..74], policy::execute(&context))
         }
         Some(1) if data.len() == 41 => (
             &data[9..41],
-            policy::validate_daily_limit(word(data, 1)).map(|_| 0),
+            policy_api::validate_daily_limit(word(data, 1)).map(|_| 0),
         ),
         _ => return Err(ProgramError::InvalidInstructionData),
     };
