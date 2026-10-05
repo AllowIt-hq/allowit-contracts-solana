@@ -621,7 +621,7 @@ fn minimal_native_adapter_matches_borsh_requests_and_every_kernel_decision() {
         assert_eq!(d.binding, [7; 32]);
         assert_eq!(
             d.error,
-            policy_api::validate_daily_limit(limit)
+            allowit_interface::policy_api::validate_daily_limit(limit)
                 .err()
                 .map(|e| e as u32)
                 .unwrap_or(0)
