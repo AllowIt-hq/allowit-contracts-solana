@@ -23,7 +23,7 @@ SBF_OUT_DIR="$PWD/target/deploy" cargo test --manifest-path sbf-tests/Cargo.toml
 python3 scripts/artifacts.py
 ```
 
-Mollusk tests execute compiled policy/custody, System Program initialization and real SPL Token CPIs. The minimal adapter is checked against Borsh encoding and kernel decisions, including malformed lengths/bools and unexpected accounts. Public Devnet deployment remains pending: rate limits blocked funding the fresh deployer. No frontend/CLI E2E or production security audit is claimed.
+Mollusk tests execute compiled policy/custody, System Program initialization and real SPL Token CPIs. The minimal adapter is checked against Borsh encoding and kernel decisions, including malformed lengths/bools and unexpected accounts. Deployment and acceptance evidence is maintained in the main project wiki and applies only to the recorded release. VM tests do not establish frontend/native-wallet acceptance or a production security audit.
 
 ## ABI version 1
 
@@ -49,14 +49,10 @@ Use a fresh test key and an explicitly selected test cluster. Deploy policy with
 
 Immutable policy code cannot be upgraded, closed or refunded. Deploy new policy versions under new IDs and switch with owner-authorized SetPolicy, which clears approval. Custody's upgrade authority is a separate trust root: if retained, its holder can replace custody logic and control funds. Production requires an explicit authority/governance choice. Do not close shared custody while vaults hold funds. A vault/token-account closure instruction is not implemented.
 
-Query live `getMinimumBalanceForRentExemption` for storage; upload buffers can temporarily require additional capital. Loader-v3 closure refunds ProgramData, leaves the tiny program-address account and consumes fees. The original 38,072/103,832-byte local deploy/close benchmark used 147 successful transactions and 0.000755 SOL fees. This is not a quote for the hardened binaries or a mainnet receipt. Shared program storage is paid once per deployment, while each vault pays for small state/token accounts.
-
-## Independent review
-
-Claude Code Opus 5.5 found no remaining material blockers for the hackathon MVP. The raw report and exact reviewed code revisions are in `evidence/opus-review.json`. Remaining test gaps and production/governance limitations are retained there. This review did not independently rerun builds or tests.
+Query live `getMinimumBalanceForRentExemption` for storage; upload buffers can temporarily require additional capital. Loader-v3 closure refunds ProgramData, leaves the tiny program-address account and consumes fees. Shared program storage is paid once per deployment, while each vault pays for small state/token accounts.
 
 ## Policy entrypoint and system functions
 
 `policy/policy.rs` contains one generated function, `execute`. It calls `require_approval` and `enforce_daily_limit` from `policy/policy_api.rs`. Approval, daily rollover, clock checks, overflow checks and the compiled parameter ceiling belong to this standard library. Custody commits the returned next daily spend atomically with token movement. Both files are included in the pinned source bundle; clients display the literal compiled policy source and can show the exact system-function implementation separately. Chain adapters retain their version-1 ABI.
 
-The existing review record covers the preceding release. The entrypoint refactor was independently reviewed through Claude Code Opus 5.5 with no blocking or material findings. The report and exact reviewed revisions are in `evidence/execute-system-review.json`. Public Solana Testnet acceptance remains pending.
+Review reports, deployment evidence and retained artifact manifests are in the [main project artifacts](https://github.com/ackrate/ackrate-project/tree/main/instance/artifacts/109-contract-and-branch-audit/AllowIt-contracts-solana). Write new task outputs there under the numbered source resource. `python3 scripts/artifacts.py` prints a build manifest to stdout; pass `--output` with an explicit main-project artifact path to retain it.
