@@ -196,7 +196,7 @@ fn bound_limit(
     source: &[u8; 32],
     value: u64,
 ) -> ProgramResult {
-    allowit_interface::policy::validate_daily_limit(value)
+    allowit_interface::policy_api::validate_daily_limit(value)
         .map_err(|e| ProgramError::Custom(1000 + e as u32))?;
     verify_artifact(policy, data, artifact)?;
     let binding = hashv(&[b"allowit-tune-v1", vault.key.as_ref(), &value.to_le_bytes()]).to_bytes();
@@ -507,7 +507,7 @@ pub fn process_instruction(
                 };
                 let policy_data = next_account_info(iter)?;
                 verify_artifact(policy, policy_data, &state.policy_artifact)?;
-                allowit_interface::policy::validate_daily_limit(state.daily_limit)
+                allowit_interface::policy_api::validate_daily_limit(state.daily_limit)
                     .map_err(|e| ProgramError::Custom(1000 + e as u32))?;
                 let next = evaluate(
                     policy,
