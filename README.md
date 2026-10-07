@@ -23,7 +23,7 @@ SBF_OUT_DIR="$PWD/target/deploy" cargo test --manifest-path sbf-tests/Cargo.toml
 python3 scripts/artifacts.py
 ```
 
-Mollusk tests execute compiled policy/custody, System Program initialization and real SPL Token CPIs. The minimal adapter is checked against Borsh encoding and kernel decisions, including malformed lengths/bools and unexpected accounts. Deployment and acceptance evidence is maintained in the main project wiki and applies only to the recorded release. VM tests do not establish frontend/native-wallet acceptance or a production security audit.
+Mollusk tests execute compiled policy/custody, System Program initialization and real SPL Token CPIs. The minimal adapter is checked against Borsh encoding and kernel decisions, including malformed lengths/bools and unexpected accounts. 
 
 ## ABI version 1
 
@@ -55,4 +55,4 @@ Query live `getMinimumBalanceForRentExemption` for storage; upload buffers can t
 
 `policy/policy.rs` contains one generated function, `execute`. It calls `require_approval` and `enforce_daily_limit` from `policy/policy_api.rs`. Approval, daily rollover, clock checks, overflow checks and the compiled parameter ceiling belong to this standard library. Custody commits the returned next daily spend atomically with token movement. Both files are included in the pinned source bundle; clients display the literal compiled policy source and can show the exact system-function implementation separately. Chain adapters retain their version-1 ABI.
 
-Review reports, deployment evidence and retained artifact manifests are in the [main project artifacts](https://github.com/ackrate/ackrate-project/tree/main/instance/artifacts/109-contract-and-branch-audit/AllowIt-contracts-solana). Write new task outputs there under the numbered source resource. `python3 scripts/artifacts.py` prints a build manifest to stdout; pass `--output` with an explicit main-project artifact path to retain it.
+`python3 scripts/artifacts.py` prints a build manifest. Use `--output PATH` to save it.
