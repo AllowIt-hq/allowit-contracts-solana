@@ -23,7 +23,7 @@ SBF_OUT_DIR="$PWD/target/deploy" cargo test --manifest-path sbf-tests/Cargo.toml
 python3 scripts/artifacts.py
 ```
 
-Mollusk tests execute compiled policy/custody, System Program initialization and real SPL Token CPIs. The minimal adapter is checked against Borsh encoding and kernel decisions, including malformed lengths/bools and unexpected accounts. 
+Mollusk tests execute compiled policy/custody, System Program initialization and real SPL Token CPIs. The minimal adapter is checked against Borsh encoding and kernel decisions, including malformed lengths/bools and unexpected accounts.
 
 ## ABI version 1
 
