@@ -1,6 +1,6 @@
 use allowit_interface::{
     Evaluation, PolicyDecision, PolicyInstruction, VaultInstruction, VaultState, ABI_VERSION,
-    STATE_BYTES, VAULT_SEED,
+    MAX_APPROVAL_SECONDS, STATE_BYTES, VAULT_SEED,
 };
 use borsh::{BorshDeserialize, BorshSerialize};
 use solana_program::{
@@ -36,6 +36,8 @@ pub enum Error {
     InvalidDecision = 109,
     Unauthorized = 110,
     BadAccount = 111,
+    ActionLimitExceeded = 112,
+    Expired = 113,
 }
 impl From<Error> for ProgramError {
     fn from(value: Error) -> Self {
@@ -230,6 +232,7 @@ pub fn process_instruction(
         policy_source,
         policy_artifact,
         daily_limit,
+        action_limit,
     } = instruction
     {
         let asset = next_account_info(iter)?;
@@ -238,10 +241,20 @@ pub fn process_instruction(
         let executor = next_account_info(iter)?;
         let system = next_account_info(iter)?;
         let policy_data = next_account_info(iter)?;
+        let authority = next_account_info(iter)?;
         require_signer(actor)?;
         if !actor.is_writable || !vault.is_writable || system.key != &system_program::id() {
             return fail(Error::BadAccount);
         }
+        if authority.key == actor.key
+            || authority.key == executor.key
+            || executor.key == actor.key
+            || authority.key == &Pubkey::default()
+        {
+            return fail(Error::Unauthorized);
+        }
+        allowit_interface::policy_api::validate_daily_limit(action_limit)
+            .map_err(|e| ProgramError::Custom(1000 + e as u32))?;
         let (address, bump) =
             Pubkey::find_program_address(&[VAULT_SEED, actor.key.as_ref(), &vault_id], program);
         if *vault.key != address || !vault.data_is_empty() || vault.owner != &system_program::id() {
@@ -316,11 +329,105 @@ pub fn process_instruction(
                 nonce: 0,
                 revision: 0,
                 approved: false,
+                authority: authority.key.to_bytes(),
+                action_limit,
+                instance_slot: Clock::get()?.slot,
             },
         );
     }
     let mut state = load(program, vault)?;
     match instruction {
+        VaultInstruction::SetActionLimit {
+            value,
+            expected_revision,
+        } => {
+            owner(&state, actor)?;
+            revision(&state, expected_revision)?;
+            allowit_interface::policy_api::validate_daily_limit(value)
+                .map_err(|e| ProgramError::Custom(1000 + e as u32))?;
+            state.action_limit = value;
+            changed(&mut state)?;
+            store(vault, &state)
+        }
+        VaultInstruction::Close {
+            expected_revision,
+            expected_instance_slot,
+        } => {
+            owner(&state, actor)?;
+            revision(&state, expected_revision)?;
+            // Prevent same-slot closure/reinitialization from reusing an
+            // instance identity. No permanent rent-bearing tombstone is needed.
+            if !actor.is_writable
+                || state.instance_slot != expected_instance_slot
+                || Clock::get()?.slot <= state.instance_slot
+            {
+                return fail(Error::StaleRequest);
+            }
+            let source = next_account_info(iter)?;
+            let destination = next_account_info(iter)?;
+            let asset = next_account_info(iter)?;
+            let token_program = next_account_info(iter)?;
+            if asset.key.to_bytes() != state.mint
+                || token_program.key != &spl_token::id()
+                || source.key == destination.key
+            {
+                return fail(Error::BadAccount);
+            }
+            mint(asset)?;
+            let balance = vault_token(&state, vault, source)?.amount;
+            if token(destination, asset.key)?.owner != *actor.key {
+                return fail(Error::BadRecipient);
+            }
+            let bump = [state.bump];
+            let seeds = &[VAULT_SEED, &state.owner, &state.vault_id, &bump];
+            if balance > 0 {
+                invoke_signed(
+                    &spl_token::instruction::transfer_checked(
+                        token_program.key,
+                        source.key,
+                        asset.key,
+                        destination.key,
+                        vault.key,
+                        &[],
+                        balance,
+                        6,
+                    )?,
+                    &[
+                        source.clone(),
+                        asset.clone(),
+                        destination.clone(),
+                        vault.clone(),
+                        token_program.clone(),
+                    ],
+                    &[seeds],
+                )?;
+            }
+            invoke_signed(
+                &spl_token::instruction::close_account(
+                    token_program.key,
+                    source.key,
+                    actor.key,
+                    vault.key,
+                    &[],
+                )?,
+                &[
+                    source.clone(),
+                    actor.clone(),
+                    vault.clone(),
+                    token_program.clone(),
+                ],
+                &[seeds],
+            )?;
+            let refund = actor
+                .lamports()
+                .checked_add(vault.lamports())
+                .ok_or(Error::Overflow)?;
+            **actor.try_borrow_mut_lamports()? = refund;
+            **vault.try_borrow_mut_lamports()? = 0;
+            vault.resize(0)?;
+            vault.assign(&system_program::id());
+            Ok(())
+        }
         VaultInstruction::Approve {
             approved,
             expected_revision,
@@ -411,7 +518,7 @@ pub fn process_instruction(
             }
             mint(asset)?;
             if let VaultInstruction::Deposit { .. } = instruction {
-                require_signer(actor)?;
+                owner(&state, actor)?;
                 let source_data = token(source, asset.key)?;
                 if source_data.owner != *actor.key {
                     return fail(Error::Unauthorized);
@@ -447,6 +554,9 @@ pub fn process_instruction(
             if let VaultInstruction::Transfer {
                 nonce,
                 expected_revision,
+                expires_at,
+                commitment,
+                expected_instance_slot,
                 ..
             } = instruction
             {
@@ -461,11 +571,23 @@ pub fn process_instruction(
                 if state.nonce != nonce {
                     return fail(Error::StaleRequest);
                 }
+                if state.instance_slot != expected_instance_slot {
+                    return fail(Error::StaleRequest);
+                }
+                if amount > state.action_limit {
+                    return fail(Error::ActionLimitExceeded);
+                }
                 let policy = next_account_info(iter)?;
                 if state.policy != policy.key.to_bytes() {
                     return fail(Error::BadAccount);
                 }
                 let now = clock()?;
+                if now > expires_at
+                    || expires_at > now.saturating_add(MAX_APPROVAL_SECONDS)
+                    || commitment == [0; 32]
+                {
+                    return fail(Error::Expired);
+                }
                 let day = now / 86_400;
                 if day < state.spent_day {
                     return fail(Error::InvalidDecision);
@@ -478,7 +600,7 @@ pub fn process_instruction(
                 .checked_add(amount)
                 .ok_or(Error::Overflow)?;
                 let binding = hashv(&[
-                    b"allowit-transfer-v1",
+                    b"allowit-transfer-v2",
                     program.as_ref(),
                     vault.key.as_ref(),
                     actor.key.as_ref(),
@@ -494,6 +616,9 @@ pub fn process_instruction(
                     &state.daily_limit.to_le_bytes(),
                     &state.spent.to_le_bytes(),
                     &state.spent_day.to_le_bytes(),
+                    &expires_at.to_le_bytes(),
+                    &commitment,
+                    &expected_instance_slot.to_le_bytes(),
                 ])
                 .to_bytes();
                 let value = Evaluation {
@@ -506,6 +631,11 @@ pub fn process_instruction(
                     binding,
                 };
                 let policy_data = next_account_info(iter)?;
+                let authority = next_account_info(iter)?;
+                require_signer(authority)?;
+                if authority.key.to_bytes() != state.authority || authority.key == actor.key {
+                    return fail(Error::Unauthorized);
+                }
                 verify_artifact(policy, policy_data, &state.policy_artifact)?;
                 allowit_interface::policy_api::validate_daily_limit(state.daily_limit)
                     .map_err(|e| ProgramError::Custom(1000 + e as u32))?;
@@ -524,6 +654,9 @@ pub fn process_instruction(
                 store(vault, &state)?;
             } else {
                 owner(&state, actor)?;
+                if token(destination, asset.key)?.owner != *actor.key {
+                    return fail(Error::BadRecipient);
+                }
             }
             let bump = [state.bump];
             let seeds = &[VAULT_SEED, &state.owner, &state.vault_id, &bump];
