@@ -1,6 +1,6 @@
 # AllowIt native Solana contracts
 
-Private hackathon MVP: one shared custody program, a native Rust policy program per version, and a PDA state account plus classic SPL Token account per vault. The policy uses a minimal Pinocchio 0.11.2 adapter; custody uses the native SDK. No executable is deployed per wallet.
+Hackathon MVP: one shared custody program, a native Rust policy program per version, and a PDA state account plus classic SPL Token account per vault. The policy uses a minimal Pinocchio 0.11.2 adapter; custody uses the native SDK. No executable is deployed per wallet.
 
 Funding changes only the token balance; it never recompiles policy or resets spending. Daily limits use UTC calendar days and six-decimal policy units (one token = `1_000_000`). The owner can tune the explicitly declared `daily_limit` within `0..=50_000_000`; zero pauses spending. Custody independently enforces that compiled ceiling. No generic setter exists for other parameters.
 
