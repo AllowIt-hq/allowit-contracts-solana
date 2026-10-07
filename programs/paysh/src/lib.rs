@@ -127,6 +127,14 @@ fn create<'a>(
         )
     }
 }
+// Keep cryptographic work in the native SHA-256 syscall onchain. The pure SDK
+// helper uses software SHA-256 and produces byte-identical signed messages.
+fn signed_message(request: &Request) -> Result<Vec<u8>, ProgramError> {
+    let bytes = borsh::to_vec(request).map_err(|_| ProgramError::InvalidInstructionData)?;
+    let mut message = DOMAIN.to_vec();
+    message.extend(hash(&bytes).to_bytes());
+    Ok(message)
+}
 fn approval(
     program: &Pubkey,
     sys: &AccountInfo,
@@ -149,7 +157,7 @@ fn approval(
     ensure(d.len() >= 16 && d[0] == 1 && d[1] == 0, Error::BadSignature)?;
     let u = |p: usize| -> u16 { u16::from_le_bytes([d[p], d[p + 1]]) };
     // Accept only the canonical self-contained layout (key32,signature64,message).
-    let message = request.signed_message();
+    let message = signed_message(request)?;
     ensure(
         u(2) == 48
             && u(4) == u16::MAX
@@ -560,7 +568,7 @@ pub fn process_instruction(
             )?;
             let rec = Receipt {
                 version: 1,
-                request_hash: hash(&r.signed_message()).to_bytes(),
+                request_hash: hash(&signed_message(&r)?).to_bytes(),
                 operation_id: r.operation_id,
                 signing_timestamp: r.signing_timestamp,
             };
