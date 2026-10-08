@@ -4,9 +4,11 @@ pub mod policy;
 #[path = "../../../policy/policy_api.rs"]
 pub mod policy_api;
 
-pub const ABI_VERSION: u8 = 1;
-pub const VAULT_SEED: &[u8] = b"allowit-vault-v1";
-pub const STATE_BYTES: usize = 320;
+pub const ABI_VERSION: u8 = 2;
+pub const VAULT_SEED: &[u8] = b"allowit-vault-v2";
+/// 347 serialized bytes plus zero padding. ABI 1's 320-byte state is incompatible.
+pub const STATE_BYTES: usize = 352;
+pub const MAX_APPROVAL_SECONDS: u64 = 300;
 #[derive(Clone, Debug, BorshDeserialize, BorshSerialize)]
 pub struct VaultState {
     pub abi: u8,
@@ -25,6 +27,11 @@ pub struct VaultState {
     pub nonce: u64,
     pub revision: u64,
     pub approved: bool,
+    pub authority: [u8; 32],
+    pub action_limit: u64,
+    /// The chain slot of initialization. Closure requires a later slot, so a
+    /// recreated PDA cannot accept a prior instance's signed execution.
+    pub instance_slot: u64,
 }
 #[derive(Clone, Debug, BorshDeserialize, BorshSerialize)]
 pub enum VaultInstruction {
@@ -33,6 +40,7 @@ pub enum VaultInstruction {
         policy_source: [u8; 32],
         policy_artifact: [u8; 32],
         daily_limit: u64,
+        action_limit: u64,
     },
     Deposit {
         amount: u64,
@@ -49,6 +57,11 @@ pub enum VaultInstruction {
         amount: u64,
         nonce: u64,
         expected_revision: u64,
+        expires_at: u64,
+        /// Canonical server assessment/request commitment, signed in the exact
+        /// transaction message. This is trusted authorization, not a ZK proof.
+        commitment: [u8; 32],
+        expected_instance_slot: u64,
     },
     Withdraw {
         amount: u64,
@@ -60,6 +73,14 @@ pub enum VaultInstruction {
     },
     Unsupported {
         method: u32,
+    },
+    SetActionLimit {
+        value: u64,
+        expected_revision: u64,
+    },
+    Close {
+        expected_revision: u64,
+        expected_instance_slot: u64,
     },
 }
 #[derive(Clone, Debug, BorshDeserialize, BorshSerialize)]

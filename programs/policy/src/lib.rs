@@ -40,7 +40,7 @@ fn process_instruction(_: &Address, accounts: &mut [AccountView], data: &[u8]) -
         Err(error) => (error as u32, 0),
     };
     let mut response = [0u8; 77];
-    response[0] = 1;
+    response[0] = 2;
     response[1..5].copy_from_slice(&error.to_le_bytes());
     response[5..37].copy_from_slice(binding);
     response[37..69].copy_from_slice(&source_hash::SOURCE_HASH);
