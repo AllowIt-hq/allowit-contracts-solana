@@ -384,3 +384,161 @@ fn owner_only_and_pause_block_public_submitters() {
         assert_eq!(f.amount(f.vendor), 0);
     }
 }
+
+impl F {
+    fn admin(
+        &mut self,
+        ix: Instruction,
+        actor: Pubkey,
+        signer: bool,
+        extra: Vec<AccountMeta>,
+    ) -> TransactionResult {
+        self.accounts.entry(actor).or_insert(a(key(0), vec![]));
+        let mut accounts = vec![rw(self.policy, false), rw(actor, signer)];
+        accounts.extend(extra);
+        let ix = Ix {
+            program_id: self.program,
+            accounts,
+            data: borsh::to_vec(&ix).unwrap(),
+        };
+        let result = self.svm.process_transaction_instructions(
+            &[ix],
+            &self
+                .accounts
+                .iter()
+                .map(|(k, a)| (*k, a.clone()))
+                .collect::<Vec<_>>(),
+            Some(&self.payer),
+        );
+        if result.program_result.is_ok() {
+            for (k, a) in &result.resulting_accounts {
+                self.accounts.insert(*k, a.clone());
+            }
+        }
+        result
+    }
+    fn withdraw(&mut self, actor: Pubkey, signer: bool, canonical: bool) -> TransactionResult {
+        let owner = key(42);
+        let tp = Pubkey::new_from_array(spl_token::id().to_bytes());
+        let ata_program = Pubkey::from_str_const("ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL");
+        let dst = if canonical {
+            Pubkey::find_program_address(
+                &[owner.as_ref(), tp.as_ref(), self.mint.as_ref()],
+                &ata_program,
+            )
+            .0
+        } else {
+            key(61)
+        };
+        let mut token = Token::unpack(&self.accounts[&self.vendor].data).unwrap();
+        token.owner = old(owner);
+        token.amount = 0;
+        let mut data = vec![0; Token::LEN];
+        Token::pack(token, &mut data).unwrap();
+        self.accounts.entry(dst).or_insert(a(tp, data));
+        let native =
+            Pubkey::find_program_address(&[SOL_SEED, self.policy.as_ref()], &self.program).0;
+        self.admin(
+            Instruction::Withdraw,
+            actor,
+            signer,
+            vec![
+                rw(native, false),
+                rw(self.usdc, false),
+                rw(self.wsol, false),
+                rw(dst, false),
+                ro(tp, false),
+                ro(key(0), false),
+            ],
+        )
+    }
+}
+#[test]
+fn owner_recovers_sol_usdc_and_wrapped_sol_while_paused_expired() {
+    let mut f = F::new();
+    assert!(f.run(false).program_result.is_ok());
+    let mut p = Policy::deserialize(&mut &f.accounts[&f.policy].data[..]).unwrap();
+    p.paused = true;
+    p.config.policy_expires_timestamp = 1;
+    let mut data = borsh::to_vec(&p).unwrap();
+    data.resize(POLICY_BYTES, 0);
+    f.accounts.get_mut(&f.policy).unwrap().data = data;
+    let native = Pubkey::find_program_address(&[SOL_SEED, f.policy.as_ref()], &f.program).0;
+    let recover =
+        f.accounts[&native].lamports + f.accounts[&f.wsol].lamports + f.accounts[&f.usdc].lamports;
+    let receipt =
+        Pubkey::find_program_address(&[RECEIPT_SEED, f.policy.as_ref(), &f.r.nonce], &f.program).0;
+    let receipt_data = f.accounts[&receipt].data.clone();
+    let owner = key(42);
+    let r = f.withdraw(owner, true, true);
+    assert!(r.program_result.is_ok(), "{:?}", r.program_result);
+    assert_eq!(f.accounts[&owner].lamports, 100_000_000 + recover);
+    assert_eq!(f.accounts[&native].lamports, 0);
+    assert_eq!(f.accounts[&f.usdc].lamports, 0);
+    assert_eq!(f.accounts[&f.wsol].lamports, 0);
+    let dst = Pubkey::find_program_address(
+        &[
+            owner.as_ref(),
+            Pubkey::new_from_array(spl_token::id().to_bytes()).as_ref(),
+            f.mint.as_ref(),
+        ],
+        &Pubkey::from_str_const("ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL"),
+    )
+    .0;
+    assert_eq!(f.amount(dst), 19_000_000);
+    assert_eq!(f.accounts[&receipt].data, receipt_data);
+    let p = Policy::deserialize(&mut &f.accounts[&f.policy].data[..]).unwrap();
+    assert!(p.paused);
+    assert_eq!(p.version, 2);
+    assert_eq!(f.accounts[&f.policy].owner, f.program);
+    assert!(f.run(false).program_result.is_err());
+    assert!(f
+        .admin(Instruction::Pause(false), owner, true, vec![])
+        .program_result
+        .is_err());
+    // Even subsequently donated native SOL remains recoverable, with closed token vaults.
+    f.accounts.get_mut(&native).unwrap().lamports = 12345;
+    assert!(f.withdraw(owner, true, true).program_result.is_ok());
+    assert_eq!(f.accounts[&native].lamports, 0);
+}
+#[test]
+fn withdrawal_rejects_unauthorized_unsigned_and_noncanonical_destinations() {
+    for (actor, signer, canonical) in [
+        (key(43), true, true),
+        (key(42), false, true),
+        (key(42), true, false),
+    ] {
+        let mut f = F::new();
+        let before = f.accounts[&f.usdc].clone();
+        assert!(f.withdraw(actor, signer, canonical).program_result.is_err());
+        assert_eq!(f.accounts[&f.usdc], before);
+    }
+}
+#[test]
+fn initialization_rejects_custody_as_service_fee_treasury() {
+    let mut f = F::new();
+    let p = Policy::deserialize(&mut &f.accounts[&f.policy].data[..]).unwrap();
+    let mut c = p.config;
+    let native = Pubkey::find_program_address(&[SOL_SEED, f.policy.as_ref()], &f.program).0;
+    c.treasury = native.to_bytes();
+    let result = f.admin(
+        Instruction::Initialize(c),
+        key(42),
+        true,
+        vec![
+            ro(f.usdc, false),
+            ro(f.wsol, false),
+            ro(f.mint, false),
+            ro(f.vendor, false),
+            ro(native, false),
+            ro(key(0), false),
+            rw(native, false),
+        ],
+    );
+    assert!(result.program_result.is_err());
+    assert!(
+        format!("{:?}", result.program_result).contains("200"),
+        "{:?}",
+        result.program_result
+    );
+}

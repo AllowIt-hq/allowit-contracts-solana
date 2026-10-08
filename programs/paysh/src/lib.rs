@@ -357,6 +357,7 @@ pub fn process_instruction(
         address(treasury, &c.treasury)?;
         ensure(
             treasury.key != policy.key
+                && treasury.key != native.key
                 && treasury.key != usdc.key
                 && treasury.key != wsol.key
                 && c.evaluator != [0; 32]
@@ -405,7 +406,7 @@ pub fn process_instruction(
     let (k, bump) =
         Pubkey::find_program_address(&[POLICY_SEED, &p.owner, &p.config.instance_id], program);
     ensure(
-        k == *policy.key && bump == p.bump && p.version == 1,
+        k == *policy.key && bump == p.bump && matches!(p.version, 1 | 2),
         Error::BadAccount,
     )?;
     match ix {
@@ -415,11 +416,114 @@ pub fn process_instruction(
                 Error::Unauthorized,
             )?;
             ensure(iter.as_slice().is_empty(), Error::BadAccount)?;
+            ensure(value || p.version == 1, Error::Paused)?;
             p.paused = value;
             save(policy, &p)
         }
+        Instruction::Withdraw => {
+            ensure(
+                actor.is_signer && actor.is_writable && actor.key.to_bytes() == p.owner,
+                Error::Unauthorized,
+            )?;
+            let native = next_account_info(iter)?;
+            let usdc = next_account_info(iter)?;
+            let wsol = next_account_info(iter)?;
+            let destination = next_account_info(iter)?;
+            let tokens = next_account_info(iter)?;
+            let system = next_account_info(iter)?;
+            ensure(
+                iter.as_slice().is_empty()
+                    && tokens.key == &spl_token::id()
+                    && system.key == &system_program::id(),
+                Error::BadAccount,
+            )?;
+            let native_bump = [sol_vault(program, policy, native)?];
+            address(usdc, &p.config.vault_usdc)?;
+            address(wsol, &p.config.vault_wsol)?;
+            let mint = Pubkey::new_from_array(p.config.usdc_mint);
+            let associated =
+                solana_program::pubkey!("ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL");
+            let ata = Pubkey::find_program_address(
+                &[actor.key.as_ref(), spl_token::id().as_ref(), mint.as_ref()],
+                &associated,
+            )
+            .0;
+            ensure(
+                *destination.key == ata && token(destination, &mint)?.owner == *actor.key,
+                Error::BadAccount,
+            )?;
+            let close_usdc = !(usdc.owner == &system_program::id() && usdc.data_is_empty());
+            let amount = if close_usdc {
+                vault_token(usdc, &mint, policy.key)?.amount
+            } else {
+                0
+            };
+            let close_wsol = !(wsol.owner == &system_program::id() && wsol.data_is_empty());
+            if close_wsol {
+                vault_token(wsol, &spl_token::native_mint::id(), policy.key)?;
+            }
+            let bump = [p.bump];
+            let seeds: &[&[u8]] = &[POLICY_SEED, &p.owner, &p.config.instance_id, &bump];
+            if amount > 0 {
+                invoke_signed(
+                    &spl_token::instruction::transfer(
+                        tokens.key,
+                        usdc.key,
+                        destination.key,
+                        policy.key,
+                        &[],
+                        amount,
+                    )?,
+                    &[
+                        usdc.clone(),
+                        destination.clone(),
+                        policy.clone(),
+                        tokens.clone(),
+                    ],
+                    &[seeds],
+                )?;
+            }
+            if close_usdc {
+                invoke_signed(
+                    &spl_token::instruction::close_account(
+                        tokens.key,
+                        usdc.key,
+                        actor.key,
+                        policy.key,
+                        &[],
+                    )?,
+                    &[usdc.clone(), actor.clone(), policy.clone(), tokens.clone()],
+                    &[seeds],
+                )?;
+            }
+            if close_wsol {
+                invoke_signed(
+                    &spl_token::instruction::close_account(
+                        tokens.key,
+                        wsol.key,
+                        actor.key,
+                        policy.key,
+                        &[],
+                    )?,
+                    &[wsol.clone(), actor.clone(), policy.clone(), tokens.clone()],
+                    &[seeds],
+                )?;
+            }
+            if native.lamports() > 0 {
+                native_transfer(
+                    native,
+                    actor,
+                    system,
+                    native.lamports(),
+                    &[SOL_SEED, policy.key.as_ref(), &native_bump],
+                )?;
+            }
+            p.paused = true;
+            p.version = 2;
+            save(policy, &p)
+        }
         Instruction::Execute(r) => {
-            ensure(!p.paused, Error::Paused)?;
+            ensure(p.version == 1 && !p.paused, Error::Paused)?;
             ensure(
                 actor.is_signer && (!p.config.owner_only || actor.key.to_bytes() == p.owner),
                 Error::Unauthorized,
@@ -682,12 +786,13 @@ pub fn process_instruction(
                         &[seeds],
                     )?;
                     ensure(
-                        token(usdc, mint.key)?
+                        vault_token(usdc, mint.key, policy.key)?
                             .amount
                             .checked_sub(before)
                             .is_some_and(|out| out >= min_out_usdc),
                         Error::Slippage,
                     )?;
+                    vault_token(wsol, &spl_token::native_mint::id(), policy.key)?;
                 }
             }
             save(policy, &p)?;
