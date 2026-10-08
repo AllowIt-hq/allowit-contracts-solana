@@ -36,6 +36,7 @@ pub enum Error {
     InvalidRequest = 208,
     Paused = 209,
     Slippage = 210,
+    InvalidTreasury = 211,
 }
 impl From<Error> for ProgramError {
     fn from(e: Error) -> Self {
@@ -83,6 +84,26 @@ fn vault_token(a: &AccountInfo, m: &Pubkey, p: &Pubkey) -> Result<Token, Program
         Error::BadAccount,
     )?;
     Ok(t)
+}
+// Owner recovery may leave frozen USDC in custody while returning native SOL.
+// Frozen accounts still require the exact mint, authority and valid SPL state.
+fn recovery_token(
+    a: &AccountInfo,
+    mint: &Pubkey,
+    owner: &Pubkey,
+) -> Result<Option<Token>, ProgramError> {
+    if a.owner == &system_program::id() && a.data_is_empty() {
+        return Ok(None);
+    }
+    ensure(a.owner == &spl_token::id(), Error::BadAccount)?;
+    let t = Token::unpack(&a.try_borrow_data()?)?;
+    ensure(
+        t.mint == *mint
+            && t.owner == *owner
+            && matches!(t.state, AccountState::Initialized | AccountState::Frozen),
+        Error::BadAccount,
+    )?;
+    Ok(Some(t))
 }
 fn add(v: u64, n: u64, limit: u64) -> Result<u64, ProgramError> {
     let x = v.checked_add(n).ok_or(Error::Overflow)?;
@@ -350,13 +371,21 @@ fn owner_withdraw<'a>(
         &associated,
     )
     .0;
-    ensure(
-        *destination.key == ata && token(destination, &mint)?.owner == *actor.key,
-        Error::BadAccount,
-    )?;
-    let close_usdc = !(usdc.owner == &system_program::id() && usdc.data_is_empty());
+    ensure(*destination.key == ata, Error::BadAccount)?;
+    let destination_ready = recovery_token(destination, &mint, actor.key)?
+        .is_some_and(|t| t.state == AccountState::Initialized);
+    let source = recovery_token(usdc, &mint, policy.key)?;
+    if let Some(t) = &source {
+        ensure(
+            t.delegate == COption::None && t.close_authority == COption::None,
+            Error::BadAccount,
+        )?;
+    }
+    let close_usdc = source.as_ref().is_some_and(|t| {
+        t.state == AccountState::Initialized && (t.amount == 0 || destination_ready)
+    });
     let amount = if close_usdc {
-        vault_token(usdc, &mint, policy.key)?.amount
+        source.unwrap().amount
     } else {
         0
     };
@@ -471,9 +500,9 @@ pub fn process_instruction(
         address(mint, &c.usdc_mint)?;
         address(vendor, &c.vendor_usdc)?;
         address(treasury, &c.treasury)?;
+        ensure(treasury.key != native.key, Error::InvalidTreasury)?;
         ensure(
             treasury.key != policy.key
-                && treasury.key != native.key
                 && treasury.key != usdc.key
                 && treasury.key != wsol.key
                 && c.evaluator != [0; 32]

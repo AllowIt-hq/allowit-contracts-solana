@@ -2,7 +2,7 @@
 use allowit_paysh_interface::*;
 use borsh::BorshDeserialize;
 use ed25519_dalek::{Signer, SigningKey};
-use mollusk_svm::{result::types::TransactionResult, Mollusk};
+use mollusk_svm::{Mollusk, result::types::TransactionResult};
 use solana_account::Account;
 use solana_instruction::{AccountMeta, Instruction as Ix};
 use solana_program::{program_option::COption, program_pack::Pack, pubkey::Pubkey as OldKey};
@@ -492,10 +492,11 @@ fn owner_recovers_sol_usdc_and_wrapped_sol_while_paused_expired() {
     assert_eq!(p.version, 2);
     assert_eq!(f.accounts[&f.policy].owner, f.program);
     assert!(f.run(false).program_result.is_err());
-    assert!(f
-        .admin(Instruction::Pause(false), owner, true, vec![])
-        .program_result
-        .is_err());
+    assert!(
+        f.admin(Instruction::Pause(false), owner, true, vec![])
+            .program_result
+            .is_err()
+    );
     // Even subsequently donated native SOL remains recoverable, with closed token vaults.
     f.accounts.get_mut(&native).unwrap().lamports = 12345;
     assert!(f.withdraw(owner, true, true).program_result.is_ok());
@@ -535,10 +536,168 @@ fn initialization_rejects_custody_as_service_fee_treasury() {
             rw(native, false),
         ],
     );
-    assert!(result.program_result.is_err());
-    assert!(
-        format!("{:?}", result.program_result).contains("200"),
-        "{:?}",
-        result.program_result
+    assert_eq!(
+        result.program_result,
+        mollusk_svm::result::types::TransactionProgramResult::Failure(
+            0,
+            solana_program_error::ProgramError::Custom(211)
+        )
     );
+}
+
+impl F {
+    fn owner_ata(&self) -> Pubkey {
+        Pubkey::find_program_address(
+            &[
+                key(42).as_ref(),
+                Pubkey::new_from_array(spl_token::id().to_bytes()).as_ref(),
+                self.mint.as_ref(),
+            ],
+            &Pubkey::from_str_const("ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL"),
+        )
+        .0
+    }
+    fn owner_destination(&mut self, state: AccountState) {
+        let mut t = Token::unpack(&self.accounts[&self.vendor].data).unwrap();
+        t.owner = old(key(42));
+        t.amount = 0;
+        t.state = state;
+        let mut data = vec![0; Token::LEN];
+        Token::pack(t, &mut data).unwrap();
+        self.accounts.insert(
+            self.owner_ata(),
+            a(Pubkey::new_from_array(spl_token::id().to_bytes()), data),
+        );
+    }
+    fn freeze_for_recovery(&mut self, account: Pubkey) {
+        let mut mint = Mint::unpack(&self.accounts[&self.mint].data).unwrap();
+        mint.freeze_authority = COption::Some(old(key(42)));
+        Mint::pack(mint, &mut self.accounts.get_mut(&self.mint).unwrap().data).unwrap();
+        self.freeze_or_thaw(account, false);
+    }
+    fn thaw(&mut self, account: Pubkey) {
+        self.freeze_or_thaw(account, true);
+    }
+    fn freeze_or_thaw(&mut self, account: Pubkey, thaw: bool) {
+        self.accounts.entry(key(42)).or_insert(a(key(0), vec![]));
+        let build = if thaw {
+            spl_token::instruction::thaw_account
+        } else {
+            spl_token::instruction::freeze_account
+        };
+        let ix = build(
+            &spl_token::id(),
+            &old(account),
+            &old(self.mint),
+            &old(key(42)),
+            &[],
+        )
+        .unwrap();
+        let ix = Ix {
+            program_id: Pubkey::new_from_array(ix.program_id.to_bytes()),
+            data: ix.data,
+            accounts: ix
+                .accounts
+                .into_iter()
+                .map(|m| AccountMeta {
+                    pubkey: Pubkey::new_from_array(m.pubkey.to_bytes()),
+                    is_signer: m.is_signer,
+                    is_writable: m.is_writable,
+                })
+                .collect(),
+        };
+        let result = self.svm.process_transaction_instructions(
+            &[ix],
+            &self
+                .accounts
+                .iter()
+                .map(|(k, a)| (*k, a.clone()))
+                .collect::<Vec<_>>(),
+            Some(&self.payer),
+        );
+        assert!(result.program_result.is_ok(), "{:?}", result.program_result);
+        for (k, a) in result.resulting_accounts {
+            self.accounts.insert(k, a);
+        }
+    }
+}
+#[test]
+fn frozen_usdc_source_preserves_tokens_without_blocking_native_recovery() {
+    let mut f = F::new();
+    f.owner_destination(AccountState::Initialized);
+    f.freeze_for_recovery(f.usdc);
+    let source = f.accounts[&f.usdc].clone();
+    let native = Pubkey::find_program_address(&[SOL_SEED, f.policy.as_ref()], &f.program).0;
+    let result = f.withdraw(key(42), true, true);
+    assert!(result.program_result.is_ok(), "{:?}", result.program_result);
+    assert_eq!(f.accounts[&native].lamports, 0);
+    assert_eq!(f.accounts[&f.wsol].lamports, 0);
+    assert_eq!(f.accounts[&f.usdc], source);
+    assert_eq!(f.amount(f.owner_ata()), 0);
+    let p = Policy::deserialize(&mut &f.accounts[&f.policy].data[..]).unwrap();
+    assert!(p.paused);
+    assert_eq!(p.version, 2);
+    // The real SPL Token thaw CPI releases only the previously frozen USDC.
+    f.thaw(f.usdc);
+    let result = f.withdraw(key(42), true, true);
+    assert!(result.program_result.is_ok(), "{:?}", result.program_result);
+    assert_eq!(f.amount(f.owner_ata()), 20_000_000);
+    assert_eq!(f.accounts[&f.usdc].lamports, 0);
+}
+#[test]
+fn frozen_owner_destination_preserves_usdc_until_thawed() {
+    let mut f = F::new();
+    f.owner_destination(AccountState::Initialized);
+    let dst = f.owner_ata();
+    f.freeze_for_recovery(dst);
+    let source = f.accounts[&f.usdc].clone();
+    let result = f.withdraw(key(42), true, true);
+    assert!(result.program_result.is_ok(), "{:?}", result.program_result);
+    let native = Pubkey::find_program_address(&[SOL_SEED, f.policy.as_ref()], &f.program).0;
+    assert_eq!(f.accounts[&native].lamports, 0);
+    assert_eq!(f.accounts[&f.wsol].lamports, 0);
+    assert_eq!(f.accounts[&f.usdc], source);
+    assert_eq!(f.amount(dst), 0);
+    f.thaw(dst);
+    let result = f.withdraw(key(42), true, true);
+    assert!(result.program_result.is_ok(), "{:?}", result.program_result);
+    assert_eq!(f.amount(dst), 20_000_000);
+    assert_eq!(f.accounts[&f.usdc].lamports, 0);
+}
+#[test]
+fn missing_owner_destination_recovers_native_then_usdc_when_created() {
+    let mut f = F::new();
+    let dst = f.owner_ata();
+    f.accounts.insert(dst, a(key(0), vec![]));
+    let source = f.accounts[&f.usdc].clone();
+    let result = f.withdraw(key(42), true, true);
+    assert!(result.program_result.is_ok(), "{:?}", result.program_result);
+    let native = Pubkey::find_program_address(&[SOL_SEED, f.policy.as_ref()], &f.program).0;
+    assert_eq!(f.accounts[&native].lamports, 0);
+    assert_eq!(f.accounts[&f.wsol].lamports, 0);
+    assert_eq!(f.accounts[&f.usdc], source);
+    assert!(f.accounts[&dst].data.is_empty());
+    f.owner_destination(AccountState::Initialized);
+    let result = f.withdraw(key(42), true, true);
+    assert!(result.program_result.is_ok(), "{:?}", result.program_result);
+    assert_eq!(f.amount(dst), 20_000_000);
+}
+#[test]
+fn recovery_rejects_wrong_owner_or_mint_at_canonical_destination() {
+    for wrong_owner in [false, true] {
+        let mut f = F::new();
+        f.owner_destination(AccountState::Frozen);
+        let dst = f.owner_ata();
+        let mut t = Token::unpack(&f.accounts[&dst].data).unwrap();
+        if wrong_owner {
+            t.owner = old(key(62));
+        } else {
+            t.mint = old(key(63));
+        }
+        Token::pack(t, &mut f.accounts.get_mut(&dst).unwrap().data).unwrap();
+        let native = Pubkey::find_program_address(&[SOL_SEED, f.policy.as_ref()], &f.program).0;
+        let native_before = f.accounts[&native].lamports;
+        assert!(f.withdraw(key(42), true, true).program_result.is_err());
+        assert_eq!(f.accounts[&native].lamports, native_before);
+    }
 }
