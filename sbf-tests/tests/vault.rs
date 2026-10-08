@@ -37,6 +37,7 @@ struct F {
     vault: Pubkey,
     owner: Pubkey,
     executor: Pubkey,
+    authority: Pubkey,
     mint: Pubkey,
     source: Pubkey,
     tokens: Pubkey,
@@ -55,9 +56,9 @@ impl F {
         let policy = key(11);
         let owner = key(12);
         let executor = key(13);
+        let authority = key(20);
         let mint = key(14);
         let source = key(15);
-        let tokens = key(16);
         let recipient = key(17);
         let loader =
             Pubkey::new_from_array(solana_program::bpf_loader_upgradeable::id().to_bytes());
@@ -69,10 +70,17 @@ impl F {
         let artifact = solana_program::hash::hash(&elf).to_bytes();
         let (vault, bump) =
             Pubkey::find_program_address(&[VAULT_SEED, owner.as_ref(), &[18; 32]], &program);
+        let token_program = Pubkey::new_from_array(spl_token::id().to_bytes());
+        let (tokens, _) = Pubkey::find_program_address(
+            &[vault.as_ref(), token_program.as_ref(), mint.as_ref()],
+            &mollusk_svm_programs_token::associated_token::ID,
+        );
         let mut svm = Mollusk::new(&program, "allowit_vault");
         svm.add_program(&policy, "allowit_policy");
         mollusk_svm_programs_token::token::add_program(&mut svm);
+        mollusk_svm_programs_token::associated_token::add_program(&mut svm);
         svm.sysvars.clock.unix_timestamp = 86_401;
+        svm.sysvars.clock.slot = 100;
         let mut accounts = BTreeMap::new();
         let state = VaultState {
             abi: ABI_VERSION,
@@ -91,11 +99,14 @@ impl F {
             nonce: 0,
             revision: 0,
             approved: false,
+            authority: authority.to_bytes(),
+            action_limit: 25_000_000,
+            instance_slot: 99,
         };
         let mut data = borsh::to_vec(&state).unwrap();
         data.resize(STATE_BYTES, 0);
         accounts.insert(vault, account(program, data));
-        for k in [owner, executor] {
+        for k in [owner, executor, authority, key(21)] {
             accounts.insert(k, account(key(0), vec![]));
         }
         let token_owner = Pubkey::new_from_array(spl_token::id().to_bytes());
@@ -136,6 +147,7 @@ impl F {
         }
         for (key, account) in [
             mollusk_svm_programs_token::token::keyed_account(),
+            mollusk_svm_programs_token::associated_token::keyed_account(),
             mollusk_svm::program::keyed_account_for_system_program(),
         ] {
             accounts.insert(key, account);
@@ -159,6 +171,7 @@ impl F {
             vault,
             owner,
             executor,
+            authority,
             mint,
             source,
             tokens,
@@ -227,6 +240,9 @@ impl F {
                 amount,
                 nonce,
                 expected_revision: revision,
+                expires_at: self.svm.sysvars.clock.unix_timestamp as u64 + 120,
+                commitment: [42; 32],
+                expected_instance_slot: self.state().instance_slot,
             },
             vec![
                 rw(self.vault, false),
@@ -237,6 +253,7 @@ impl F {
                 ro(Pubkey::new_from_array(spl_token::id().to_bytes()), false),
                 ro(self.policy, false),
                 ro(self.policy_data, false),
+                ro(self.authority, true),
             ],
         )
     }
@@ -351,7 +368,10 @@ fn forged_actor_and_policy_cannot_spend() {
             V::Transfer {
                 amount: 1,
                 nonce: 0,
-                expected_revision: 1
+                expected_revision: 1,
+                expires_at: 86_521,
+                commitment: [42; 32],
+                expected_instance_slot: 99
             },
             metas
         )
@@ -372,7 +392,10 @@ fn forged_actor_and_policy_cannot_spend() {
             V::Transfer {
                 amount: 1,
                 nonce: 0,
-                expected_revision: 1
+                expected_revision: 1,
+                expires_at: 86_521,
+                commitment: [42; 32],
+                expected_instance_slot: 99
             },
             metas
         )
@@ -393,7 +416,10 @@ fn forged_actor_and_policy_cannot_spend() {
             V::Transfer {
                 amount: 1,
                 nonce: 0,
-                expected_revision: 1
+                expected_revision: 1,
+                expires_at: 86_521,
+                commitment: [42; 32],
+                expected_instance_slot: 99
             },
             metas
         )
@@ -419,6 +445,7 @@ fn initialize_creates_factory_pda_and_policy_change_keeps_counters() {
         policy_source: source_hash::SOURCE_HASH,
         policy_artifact: f.artifact,
         daily_limit: 25_000_000,
+        action_limit: 25_000_000,
     };
     assert!(
         f.run(
@@ -431,7 +458,8 @@ fn initialize_creates_factory_pda_and_policy_change_keeps_counters() {
                 ro(f.policy, false),
                 ro(f.executor, false),
                 ro(Pubkey::default(), false),
-                ro(f.policy_data, false)
+                ro(f.policy_data, false),
+                ro(f.authority, false)
             ]
         )
         .program_result
@@ -560,6 +588,353 @@ fn wrong_mint_and_vault_owned_destinations_are_rejected() {
     Mint::pack(m, &mut f.accounts.get_mut(&f.mint).unwrap().data).unwrap();
     f.accounts.get_mut(&f.mint).unwrap().owner = key(90);
     reject(&f.deposit(1), 103);
+}
+#[test]
+fn authority_expiry_instance_and_action_limits_are_enforced() {
+    let mut f = F::new();
+    assert!(f.deposit(1_000_000).program_result.is_ok());
+    assert!(
+        f.control(V::Approve {
+            approved: true,
+            expected_revision: 0
+        })
+        .program_result
+        .is_ok()
+    );
+    let instruction = V::Transfer {
+        amount: 1,
+        nonce: 0,
+        expected_revision: 1,
+        expires_at: 86_521,
+        commitment: [42; 32],
+        expected_instance_slot: 99,
+    };
+    let metas = vec![
+        rw(f.vault, false),
+        ro(f.executor, true),
+        rw(f.tokens, false),
+        rw(f.recipient, false),
+        ro(f.mint, false),
+        ro(Pubkey::new_from_array(spl_token::id().to_bytes()), false),
+        ro(f.policy, false),
+        ro(f.policy_data, false),
+        ro(f.authority, true),
+    ];
+    let mut missing = metas.clone();
+    missing.pop();
+    assert!(f.run(instruction.clone(), missing).program_result.is_err());
+    let mut unsigned = metas.clone();
+    unsigned[8].is_signer = false;
+    assert!(f.run(instruction.clone(), unsigned).program_result.is_err());
+    let mut wrong = metas.clone();
+    wrong[8] = ro(key(21), true);
+    reject(&f.run(instruction, wrong), 110);
+    for (expires_at, commitment, slot, code) in [
+        (86_400, [42; 32], 99, 113),
+        (86_702, [42; 32], 99, 113),
+        (86_521, [0; 32], 99, 113),
+        (86_521, [42; 32], 98, 101),
+    ] {
+        reject(
+            &f.run(
+                V::Transfer {
+                    amount: 1,
+                    nonce: 0,
+                    expected_revision: 1,
+                    expires_at,
+                    commitment,
+                    expected_instance_slot: slot,
+                },
+                metas.clone(),
+            ),
+            code,
+        );
+    }
+    assert!(
+        f.control(V::SetActionLimit {
+            value: 100_000,
+            expected_revision: 1
+        })
+        .program_result
+        .is_ok()
+    );
+    reject(&f.transfer(100_001, 0, 2), 112);
+    assert!(f.transfer(100_000, 0, 2).program_result.is_ok());
+    let before = f.state();
+    assert!(f.deposit(1).program_result.is_ok());
+    assert!(
+        f.control(V::SetActionLimit {
+            value: 50_000,
+            expected_revision: 2
+        })
+        .program_result
+        .is_ok()
+    );
+    assert_eq!(f.state().spent, before.spent);
+    assert_eq!(f.state().nonce, before.nonce);
+    reject(&f.transfer(1, 1, 2), 101);
+}
+
+#[test]
+fn budget_is_replenishable_and_owner_close_refunds_only_owner() {
+    let mut f = F::new();
+    assert!(f.deposit(100_000).program_result.is_ok());
+    assert!(
+        f.control(V::Approve {
+            approved: true,
+            expected_revision: 0
+        })
+        .program_result
+        .is_ok()
+    );
+    assert!(f.transfer(100_000, 0, 1).program_result.is_ok());
+    reject(&f.transfer(1, 1, 1), 106);
+    assert!(f.deposit(100_000).program_result.is_ok());
+    assert!(f.transfer(100_000, 1, 1).program_result.is_ok());
+    assert_eq!(f.state().spent, 200_000);
+    assert!(f.deposit(123).program_result.is_ok());
+    // Provider and policy unavailability must not prevent owner recovery.
+    f.accounts.get_mut(&f.policy).unwrap().executable = false;
+    let mut metas = vec![
+        rw(f.vault, false),
+        rw(f.owner, true),
+        rw(f.tokens, false),
+        rw(f.source, false),
+        ro(f.mint, false),
+        ro(Pubkey::new_from_array(spl_token::id().to_bytes()), false),
+    ];
+    let mut wrong = metas.clone();
+    wrong[3] = rw(f.recipient, false);
+    reject(
+        &f.run(
+            V::Close {
+                expected_revision: 1,
+                expected_instance_slot: 99,
+            },
+            wrong,
+        ),
+        108,
+    );
+    f.svm.sysvars.clock.slot = 99;
+    reject(
+        &f.run(
+            V::Close {
+                expected_revision: 1,
+                expected_instance_slot: 99,
+            },
+            metas.clone(),
+        ),
+        101,
+    );
+    f.svm.sysvars.clock.slot = 100;
+    let owner_before = f.accounts[&f.owner].lamports;
+    let refund = f.accounts[&f.vault].lamports + f.accounts[&f.tokens].lamports;
+    let tokens_before = f.amount(f.source);
+    reject(
+        &f.run(
+            V::Close {
+                expected_revision: 1,
+                expected_instance_slot: 98,
+            },
+            metas.clone(),
+        ),
+        101,
+    );
+    assert!(
+        f.run(
+            V::Close {
+                expected_revision: 1,
+                expected_instance_slot: 99
+            },
+            std::mem::take(&mut metas)
+        )
+        .program_result
+        .is_ok()
+    );
+    assert_eq!(f.accounts[&f.owner].lamports, owner_before + refund);
+    assert_eq!(f.amount(f.source), tokens_before + 123);
+    assert_eq!(f.accounts[&f.vault].lamports, 0);
+    assert!(f.accounts[&f.vault].data.is_empty());
+    assert_eq!(f.accounts[&f.tokens].lamports, 0);
+}
+
+#[test]
+fn old_layout_and_nonowner_funding_are_rejected() {
+    let mut f = F::new();
+    let metas = vec![
+        rw(f.vault, false),
+        ro(f.executor, true),
+        rw(f.source, false),
+        rw(f.tokens, false),
+        ro(f.mint, false),
+        ro(Pubkey::new_from_array(spl_token::id().to_bytes()), false),
+    ];
+    reject(&f.run(V::Deposit { amount: 1 }, metas), 110);
+    f.accounts.get_mut(&f.vault).unwrap().data.resize(320, 0);
+    reject(
+        &f.control(V::Approve {
+            approved: false,
+            expected_revision: 0,
+        }),
+        111,
+    );
+}
+
+#[test]
+fn atomic_setup_creates_funds_and_activates_or_rolls_back_every_account() {
+    let mut f = F::new();
+    for key in [f.vault, f.tokens] {
+        f.accounts.insert(key, Account::default());
+    }
+    let token_program = Pubkey::new_from_array(spl_token::id().to_bytes());
+    let mut instructions = vec![Instruction {
+        program_id: mollusk_svm_programs_token::associated_token::ID,
+        accounts: vec![
+            rw(f.owner, true),
+            rw(f.tokens, false),
+            ro(f.vault, false),
+            ro(f.mint, false),
+            ro(Pubkey::default(), false),
+            ro(token_program, false),
+        ],
+        data: vec![1], // CreateIdempotent, vault ATA has no keypair signer.
+    }];
+    let encode = |data: V, accounts: Vec<AccountMeta>| Instruction {
+        program_id: f.program,
+        accounts,
+        data: borsh::to_vec(&data).unwrap(),
+    };
+    instructions.push(encode(
+        V::Initialize {
+            vault_id: [18; 32],
+            policy_source: source_hash::SOURCE_HASH,
+            policy_artifact: f.artifact,
+            daily_limit: 25_000_000,
+            action_limit: 1_000_000,
+        },
+        vec![
+            rw(f.vault, false),
+            rw(f.owner, true),
+            ro(f.mint, false),
+            ro(f.tokens, false),
+            ro(f.policy, false),
+            ro(f.executor, false),
+            ro(Pubkey::default(), false),
+            ro(f.policy_data, false),
+            ro(f.authority, false),
+        ],
+    ));
+    instructions.push(encode(
+        V::Deposit { amount: 100_000 },
+        vec![
+            rw(f.vault, false),
+            ro(f.owner, true),
+            rw(f.source, false),
+            rw(f.tokens, false),
+            ro(f.mint, false),
+            ro(token_program, false),
+        ],
+    ));
+    instructions.push(encode(
+        V::Approve {
+            approved: true,
+            expected_revision: 0,
+        },
+        vec![
+            rw(f.vault, false),
+            ro(f.owner, true),
+            ro(f.policy, false),
+            ro(f.policy_data, false),
+        ],
+    ));
+    let before: Vec<_> = f.accounts.iter().map(|(k, a)| (*k, a.clone())).collect();
+    let success = f
+        .svm
+        .process_transaction_instructions(&instructions, &before, Some(&f.owner));
+    assert!(success.raw_result.is_ok(), "{:?}", success.raw_result);
+    for (key, account) in &success.resulting_accounts {
+        f.accounts.insert(*key, account.clone());
+    }
+    assert_eq!(f.amount(f.tokens), 100_000);
+    assert_eq!(f.amount(f.source), 99_900_000);
+    assert!(f.state().approved);
+    assert_eq!(f.state().revision, 1);
+    assert_eq!(f.state().instance_slot, 100);
+    // Close and recreate the same PDA while an old approval could still have
+    // a valid recent blockhash. Revision and nonce repeat, generation cannot.
+    f.svm.sysvars.clock.slot = 101;
+    assert!(
+        f.run(
+            V::Close {
+                expected_revision: 1,
+                expected_instance_slot: 100
+            },
+            vec![
+                rw(f.vault, false),
+                rw(f.owner, true),
+                rw(f.tokens, false),
+                rw(f.source, false),
+                ro(f.mint, false),
+                ro(token_program, false)
+            ]
+        )
+        .program_result
+        .is_ok()
+    );
+    let closed: Vec<_> = f.accounts.iter().map(|(k, a)| (*k, a.clone())).collect();
+    let recreated = f
+        .svm
+        .process_transaction_instructions(&instructions, &closed, Some(&f.owner));
+    assert!(recreated.raw_result.is_ok(), "{:?}", recreated.raw_result);
+    for (key, account) in &recreated.resulting_accounts {
+        f.accounts.insert(*key, account.clone());
+    }
+    assert_eq!(f.state().instance_slot, 101);
+    reject(
+        &f.run(
+            V::Transfer {
+                amount: 1,
+                nonce: 0,
+                expected_revision: 1,
+                expires_at: 86_521,
+                commitment: [42; 32],
+                expected_instance_slot: 100,
+            },
+            vec![
+                rw(f.vault, false),
+                ro(f.executor, true),
+                rw(f.tokens, false),
+                rw(f.recipient, false),
+                ro(f.mint, false),
+                ro(token_program, false),
+                ro(f.policy, false),
+                ro(f.policy_data, false),
+                ro(f.authority, true),
+            ],
+        ),
+        101,
+    );
+    // A failure after the funding CPI proves transaction-wide rollback.
+    instructions[3].data = borsh::to_vec(&V::Approve {
+        approved: true,
+        expected_revision: 1,
+    })
+    .unwrap();
+    let failed = f
+        .svm
+        .process_transaction_instructions(&instructions, &before, Some(&f.owner));
+    assert!(failed.raw_result.is_err());
+    for key in [f.owner, f.vault, f.tokens, f.source] {
+        assert_eq!(
+            failed
+                .resulting_accounts
+                .iter()
+                .find(|(k, _)| *k == key)
+                .unwrap()
+                .1,
+            before.iter().find(|(k, _)| *k == key).unwrap().1
+        );
+    }
 }
 #[test]
 fn minimal_native_adapter_matches_borsh_requests_and_every_kernel_decision() {
