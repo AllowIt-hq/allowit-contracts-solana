@@ -328,10 +328,38 @@ fn token_failure_rolls_back_fee_and_receipt() {
         &mut f.accounts.get_mut(&f.usdc).unwrap().data,
     )
     .unwrap();
-    let before = f.accounts[&f.treasury].lamports;
-    assert!(f.run(false).program_result.is_err());
-    assert_eq!(f.accounts[&f.treasury].lamports, before);
-    assert_eq!(f.amount(f.vendor), 0);
+    let period = (f.r.signing_timestamp as u64 / 3600).to_le_bytes();
+    let budget =
+        Pubkey::find_program_address(&[BUDGET_SEED, f.policy.as_ref(), &period], &f.program).0;
+    let receipt =
+        Pubkey::find_program_address(&[RECEIPT_SEED, f.policy.as_ref(), &f.r.nonce], &f.program).0;
+    // Existing empty System-owned PDAs exercise allocation and assignment before the CPI.
+    for account in [budget, receipt] {
+        f.accounts.insert(account, a(key(0), vec![]));
+    }
+    let before = f.accounts.clone();
+    let result = f.run(false);
+    assert_eq!(
+        result.program_result,
+        mollusk_svm::result::types::TransactionProgramResult::Failure(
+            1,
+            solana_program_error::ProgramError::Custom(
+                spl_token::error::TokenError::InsufficientFunds as u32,
+            ),
+        ),
+    );
+    // Assert the returned transaction state, rather than the success-only fixture cache.
+    // Mollusk returns original accounts on transaction failure, matching atomic execution.
+    let returned = result
+        .resulting_accounts
+        .into_iter()
+        .collect::<BTreeMap<_, _>>();
+    let native = Pubkey::find_program_address(&[SOL_SEED, f.policy.as_ref()], &f.program).0;
+    for account in [
+        f.policy, f.payer, native, f.treasury, f.usdc, f.wsol, f.vendor, budget, receipt,
+    ] {
+        assert_eq!(returned[&account], before[&account], "rollback: {account}");
+    }
 }
 
 #[test]

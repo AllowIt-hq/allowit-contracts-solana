@@ -24,11 +24,15 @@ python3 scripts/check-policy.py
 cargo test --workspace --locked
 cargo build-sbf --manifest-path programs/policy/Cargo.toml --arch v3 --optimize-size --tools-version v1.57 -- --locked
 cargo build-sbf --manifest-path programs/vault/Cargo.toml --arch v3 --optimize-size --tools-version v1.57 -- --locked
+cargo build-sbf --manifest-path programs/paysh/Cargo.toml --arch v3 --optimize-size --tools-version v1.57 -- --locked
+bash scripts/build-whirlpool-test.sh
 SBF_OUT_DIR="$PWD/target/deploy" cargo test --manifest-path sbf-tests/Cargo.toml --locked
 python3 scripts/artifacts.py
 ```
 
 Mollusk tests execute compiled policy/custody, System Program initialization and real SPL Token CPIs. The minimal adapter is checked against Borsh encoding and kernel decisions, including malformed lengths/bools and unexpected accounts.
+
+PaySH swap tests also execute unmodified Orca Whirlpool source pinned at `f2a3d13fa04eb15cf5b5a309ef9b226fd5d34e36`, with a checked source archive and locked dependencies. The test-only ELF stays outside release artifacts. `WHIRLPOOL_SBF_PATH` can select that fixture's compiled ELF; `PAYSH_SBF_PATH` selects an explicit PaySH ELF for before/after regression checks. Tests cover full input with existing WSOL and unsynced native donations, partial input rejection, and minimum-output failure with transaction rollback.
 
 ## ABI version 2
 
