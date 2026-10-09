@@ -788,6 +788,15 @@ pub fn process_instruction(
                         &spl_token::instruction::sync_native(tokens.key, wsol.key)?,
                         &[wsol.clone(), tokens.clone()],
                     )?;
+                    // SyncNative also recognizes earlier unsolicited SOL donations.
+                    // Subtract only this request's input to protect the full prior balance.
+                    let synced_wsol_before =
+                        vault_token(wsol, &spl_token::native_mint::id(), policy.key)?
+                            .amount
+                            .checked_sub(amount_in_lamports)
+                            .ok_or(Error::Budget)?;
+                    ensure(synced_wsol_before >= wsol_before, Error::Budget)?;
+                    let wsol_before = synced_wsol_before;
                     let pa = iter.as_slice();
                     let mut bytes = hash(b"global:swap").to_bytes()[..8].to_vec();
                     bytes.extend(amount_in_lamports.to_le_bytes());
@@ -836,11 +845,12 @@ pub fn process_instruction(
                             .is_some_and(|out| out >= min_out_usdc),
                         Error::Slippage,
                     )?;
-                    ensure(
-                        vault_token(wsol, &spl_token::native_mint::id(), policy.key)?.amount
-                            >= wsol_before,
-                        Error::Budget,
-                    )?;
+                    let wsol_after =
+                        vault_token(wsol, &spl_token::native_mint::id(), policy.key)?.amount;
+                    ensure(wsol_after >= wsol_before, Error::Budget)?;
+                    // Whirlpool may stop at the price limit before consuming all input.
+                    // Preserve prior WSOL and require the entire newly wrapped input.
+                    ensure(wsol_after == wsol_before, Error::Slippage)?;
                 }
             }
             save(policy, &p)?;
