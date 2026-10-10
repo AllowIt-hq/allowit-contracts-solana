@@ -8,7 +8,10 @@ Owner approval is standing approval. Each payment requires the designated execut
 
 Setup combines vault ATA creation, Initialize, Deposit and Approve in one transaction, with the owner as its only signer. Shared programs must exist beforehand. A failed instruction rolls back the entire setup. Wallet sign-in and connection remain separate authentication operations. Owner withdrawal or closure requires a later transaction.
 
-The sibling repositories compile byte-identical `policy/policy.rs` and `policy/policy_api.rs`. Their bundle identity is SHA-256 of `allowit-policy-source-v1` followed by NUL, then each file in that order: filename, NUL, eight-byte little-endian length and contents. The build fails on a stale generated identity. This source identity differs from the executable artifact hash. Clients must pin the approved artifact, chain, ABI, vault/program/factory, asset, owner, executor and revision; a reported source hash alone is not proof of deployed code. Check copies using `python3 scripts/check-policy.py --peer ../OTHER_REPO`.
+The separate bounded PaySH program has its own custody and request ABI. See [Bounded PaySH execution profile](docs/paysh.md).
+
+
+The sibling repositories compile byte-identical `policy/policy.rs` and `policy/policy_api.rs`. Their bundle identity is SHA-256 of `allowit-policy-source-v1` followed by NUL, then each file in that order: filename, NUL, eight-byte little-endian length and contents. The build fails on a stale generated identity. This source identity differs from the executable artifact hash. Clients must pin the approved artifact, chain, ABI, vault/program/factory and asset. They must also pin the owner, executor, server authority, revision and `instance_slot`. A reported source hash alone does not prove deployed code. Check copies using `python3 scripts/check-policy.py --peer ../OTHER_REPO`.
 
 Persist signed transaction bytes and hash/signature before broadcast. Query that transaction after uncertain results; do not automatically re-sign deposits. Refresh state before retrying a finalized failed or expired request. Finalized token movement proves settlement, separately from service delivery.
 
@@ -21,11 +24,15 @@ python3 scripts/check-policy.py
 cargo test --workspace --locked
 cargo build-sbf --manifest-path programs/policy/Cargo.toml --arch v3 --optimize-size --tools-version v1.57 -- --locked
 cargo build-sbf --manifest-path programs/vault/Cargo.toml --arch v3 --optimize-size --tools-version v1.57 -- --locked
+cargo build-sbf --manifest-path programs/paysh/Cargo.toml --arch v3 --optimize-size --tools-version v1.57 -- --locked
+bash scripts/build-whirlpool-test.sh
 SBF_OUT_DIR="$PWD/target/deploy" cargo test --manifest-path sbf-tests/Cargo.toml --locked
 python3 scripts/artifacts.py
 ```
 
 Mollusk tests execute compiled policy/custody, System Program initialization and real SPL Token CPIs. The minimal adapter is checked against Borsh encoding and kernel decisions, including malformed lengths/bools and unexpected accounts.
+
+PaySH swap tests also execute unmodified Orca Whirlpool source pinned at `f2a3d13fa04eb15cf5b5a309ef9b226fd5d34e36`, with a checked source archive and locked dependencies. The test-only ELF stays outside release artifacts. `WHIRLPOOL_SBF_PATH` can select that fixture's compiled ELF; `PAYSH_SBF_PATH` selects an explicit PaySH ELF for before/after regression checks. Tests cover full input with existing WSOL and unsynced native donations, partial input rejection, and minimum-output failure with transaction rollback.
 
 ## ABI version 2
 
@@ -45,9 +52,9 @@ Account order (`w` writable, `s` signer, others readonly):
 | Close | vault(w), owner(w,s), vault token(w), owner destination token(w), mint, SPL Token Program |
 | Unsupported | no accounts required |
 
-Initialize and SetPolicy carry `policy_source` and `policy_artifact`. Artifact identity hashes the complete deployed ELF allocation after the 45-byte loader header. Exact-size allocation makes this equal the `.so` hash; padded deployments require hashing their actual deployed bytes. Custody checks loader-v3 ownership, ProgramData linkage/canonical address, absent upgrade authority and matching artifact hash before invocation. Policy receives no accounts or vault signer. Its response is 77 bytes: ABI, u32 error, binding, source bundle, next spend. Custody offsets policy errors by 1000. Binding echoes the request digest; it is not proof of evaluation.
+Initialize and SetPolicy carry `policy_source` and `policy_artifact`. Artifact identity hashes the complete deployed ELF allocation after the 45-byte loader header. Exact-size allocation makes this equal the `.so` hash; padded deployments require hashing their actual deployed bytes. Custody checks loader-v3 ownership, ProgramData linkage/canonical address, absent upgrade authority and matching artifact hash before invocation. Policy receives no accounts or vault signer. Its response is 77 bytes: ABI, u32 error, binding, source bundle, next spend. Custody offsets policy errors by 1000. The explicit Unsupported instruction (tag 7) returns custody error 100 (`UnsupportedMethod`). Unknown tags fail with `InvalidInstructionData`. Binding echoes the request digest; it is not proof of evaluation.
 
-Existing enum tags 0–7 retain their operation names. Initialize appends `action_limit: u64`. Transfer appends `expires_at: u64`, `commitment: [u8;32]` and `expected_instance_slot: u64` after amount, nonce and revision. The nonzero commitment identifies the server's exact assessed operation and request. Both transaction signatures bind this commitment and every instruction/account byte. Expiry uses Unix seconds and cannot exceed the observed chain time by 300 seconds. Tag 8 is SetActionLimit(value, expected_revision). Tag 9 is Close(expected_revision). Action and daily limits use integer token units within the existing `0..=50_000_000` ceiling. Zero pauses execution.
+Existing enum tags 0–7 retain their operation names. Initialize appends `action_limit: u64`. Transfer appends `expires_at: u64`, `commitment: [u8;32]` and `expected_instance_slot: u64` after amount, nonce and revision. The nonzero commitment identifies the server's exact assessed operation and request. Both transaction signatures bind this commitment and every instruction/account byte. Expiry uses Unix seconds and cannot exceed the observed chain time by 300 seconds. Tag 8 is SetActionLimit(value, expected_revision). Tag 9 is Close(expected_revision). Action and daily limits use six-decimal base units: one token equals `1_000_000` units. The `0..=50_000_000` ceiling therefore permits at most 50 tokens. Zero pauses execution.
 
 Close transfers the entire balance to an owner-controlled token account, closes the empty vault token account, and drains/deallocates the vault state. Both accounts refund rent to the signing owner. It requires neither the executor nor the policy program. Clients retain operation history outside the closed accounts. Close includes `expected_instance_slot` after its revision and checks the exact instance. A state account can close only after its creation slot.
 

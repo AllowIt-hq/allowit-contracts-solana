@@ -22,6 +22,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "allowit-paysh"
+version = "0.1.0"
+dependencies = [
+ "allowit-paysh-interface",
+ "borsh 1.6.0",
+ "solana-program",
+ "spl-token",
+]
+
+[[package]]
+name = "allowit-paysh-interface"
+version = "0.1.0"
+dependencies = [
+ "borsh 1.6.0",
+ "sha2 0.10.9",
+]
+
+[[package]]
 name = "allowit-policy"
 version = "0.1.0"
 dependencies = [
