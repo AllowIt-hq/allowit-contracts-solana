@@ -13,18 +13,22 @@ if [[ ! -f "$fixture_root/source.tar.gz" ]]; then
         "https://codeload.github.com/orca-so/whirlpools/tar.gz/$revision" \
         --output "$fixture_root/source.tar.gz"
 fi
-printf '%s  %s\n' "$archive_sha256" "$fixture_root/source.tar.gz" | sha256sum --check --status
-if [[ ! -f "$fixture_root/source/Cargo.lock" ]]; then
-    mkdir -p "$fixture_root/source"
-    tar --extract --gzip --file "$fixture_root/source.tar.gz" \
-        --directory "$fixture_root/source" --strip-components=1
-fi
+python3 - "$fixture_root/source.tar.gz" "$archive_sha256" <<'PYHASH'
+import hashlib, sys
+from pathlib import Path
+assert hashlib.sha256(Path(sys.argv[1]).read_bytes()).hexdigest() == sys.argv[2], "Whirlpool source archive digest mismatch"
+PYHASH
+# Extract verified original bytes each time; an existing checkout is not trusted.
+verified_source="$(mktemp -d "$fixture_root/verified-source.XXXXXX")"
+trap 'rm -rf "$verified_source"' EXIT
+tar --extract --gzip --file "$fixture_root/source.tar.gz" \
+    --directory "$verified_source" --strip-components=1
 
 # Use the repository's already installed host toolchain, with the same pinned
 # platform-tools as PaySH. The upstream lockfile is used without modification.
 # Platform-tools v1.57's compiler panics while rendering an upstream dead-code
 # warning. Disable that lint for this test fixture; source and lock stay intact.
 RUSTUP_TOOLCHAIN=1.98.0 RUSTFLAGS="-Adead_code" CARGO_TARGET_DIR="$fixture_root/target" \
-    cargo build-sbf --manifest-path "$fixture_root/source/programs/whirlpool/Cargo.toml" \
+    cargo build-sbf --manifest-path "$verified_source/programs/whirlpool/Cargo.toml" \
     --arch v3 --optimize-size --tools-version v1.57 -- --locked
 printf 'Whirlpool test fixture: %s\n' "$fixture_root/target/deploy/whirlpool.so"
