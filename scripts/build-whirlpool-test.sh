@@ -16,7 +16,8 @@ fi
 python3 - "$fixture_root/source.tar.gz" "$archive_sha256" <<'PYHASH'
 import hashlib, sys
 from pathlib import Path
-assert hashlib.sha256(Path(sys.argv[1]).read_bytes()).hexdigest() == sys.argv[2], "Whirlpool source archive digest mismatch"
+if hashlib.sha256(Path(sys.argv[1]).read_bytes()).hexdigest() != sys.argv[2]:
+    sys.exit("Whirlpool source archive digest mismatch")
 PYHASH
 # Extract verified original bytes each time; an existing checkout is not trusted.
 verified_source="$(mktemp -d "$fixture_root/verified-source.XXXXXX")"
