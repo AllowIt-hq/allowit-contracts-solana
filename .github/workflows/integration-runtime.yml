@@ -25,6 +25,7 @@ jobs:
           components: rustfmt
       - uses: Swatinem/rust-cache@v2
         with:
+          key: solana-integration-runtime
           workspaces: |
             . -> target
             sbf-tests -> target
