@@ -59,8 +59,6 @@ cmp target/deploy/allowit_policy.so /tmp/allowit-policy-deployed.so
 
 Vault and PaySH retain the deployer's upgrade authority in this example. That authority can replace custody code. Record program/ProgramData IDs, genesis hash, artifact hashes and authorities. Check each deployment before configuring the SDK or initializing vaults. PaySH also needs the selected cluster's token accounts, treasury and Whirlpool pool described in [its deployment requirements](docs/paysh.md).
 
-No verified AllowIt mainnet deployment address is recorded.
-
 ## ABI and policy
 
 [ABI 2](crates/interface/src/lib.rs) uses Borsh, a 352-byte state allocation and PDA seeds `[b"allowit-vault-v2", owner, vault_id]`. ABI 1 state is rejected. Requests bind the exact instance and server commitment. Expiry cannot exceed chain time by 300 seconds.
