@@ -1,23 +1,14 @@
 # AllowIt native Solana contracts
 
-Hackathon MVP: one shared custody program, a native Rust policy program per version, and a PDA state account plus classic SPL Token account per vault. The policy uses a minimal Pinocchio 0.11.2 adapter; custody uses the native SDK. No executable is deployed per wallet.
+Shared Solana custody and Rust policy programs enforce owner-approved spending through per-vault PDA state and classic SPL Token accounts. The separate [PaySH program](docs/paysh.md) supports bounded payments and swaps.
 
-Funding changes only the token balance; it never recompiles policy or resets spending. Daily limits use UTC calendar days and six-decimal policy units (one token = `1_000_000`). The owner can tune the explicitly declared `daily_limit` within `0..=50_000_000`; zero pauses spending. Custody independently enforces that compiled ceiling. No generic setter exists for other parameters.
+The owner funds, approves, tunes, withdraws and closes a vault. Payments require the executor and server authority to sign. Custody checks balance, asset, recipient, action/day limits, nonce, revision, instance and expiry. The server evaluates semantic rules before signing.
 
-Owner approval is standing approval. Each payment requires the designated executor and trusted server authority to sign the same transaction. Custody checks balance, per-action and UTC daily limits, nonce, revision, instance slot, expiry, mint and recipient accounts. Owner configuration preserves counters and invalidates old approvals by advancing revision. Funding changes only the available token balance, with no lifetime spending cap. Funding, withdrawal and closure require the owner. The server evaluates any approved semantic rules before signing. Its signature is trusted authorization, not a cryptographic proof of semantic correctness.
-
-Setup combines vault ATA creation, Initialize, Deposit and Approve in one transaction, with the owner as its only signer. Shared programs must exist beforehand. A failed instruction rolls back the entire setup. Wallet sign-in and connection remain separate authentication operations. Owner withdrawal or closure requires a later transaction.
-
-The separate bounded PaySH program has its own custody and request ABI. See [Bounded PaySH execution profile](docs/paysh.md).
-
-
-The sibling repositories compile byte-identical `policy/policy.rs` and `policy/policy_api.rs`. Their bundle identity is SHA-256 of `allowit-policy-source-v1` followed by NUL, then each file in that order: filename, NUL, eight-byte little-endian length and contents. The build fails on a stale generated identity. This source identity differs from the executable artifact hash. Clients must pin the approved artifact, chain, ABI, vault/program/factory and asset. They must also pin the owner, executor, server authority, revision and `instance_slot`. A reported source hash alone does not prove deployed code. Check copies using `python3 scripts/check-policy.py --peer ../OTHER_REPO`.
-
-Persist signed transaction bytes and hash/signature before broadcast. Query that transaction after uncertain results; do not automatically re-sign deposits. Refresh state before retrying a finalized failed or expired request. Finalized token movement proves settlement, separately from service delivery.
+Funding preserves spending counters. Limits use UTC days and six-decimal units: `1_000_000` units = one token. The `daily_limit` ceiling is `50_000_000`. Zero pauses spending. Changing policy clears approval.
 
 ## Build and test
 
-Pinned versions: Rust 1.98.0, Agave 4.3.0, platform-tools 1.57.
+Use Rust 1.98.0, Agave 4.3.0 and platform-tools 1.57.
 
 ```sh
 python3 scripts/check-policy.py
@@ -30,15 +21,51 @@ SBF_OUT_DIR="$PWD/target/deploy" cargo test --manifest-path sbf-tests/Cargo.toml
 python3 scripts/artifacts.py
 ```
 
-Mollusk tests execute compiled policy/custody, System Program initialization and real SPL Token CPIs. The minimal adapter is checked against Borsh encoding and kernel decisions, including malformed lengths/bools and unexpected accounts.
+Mollusk tests execute compiled programs and SPL Token transfers. The Whirlpool fixture uses pinned Orca source. See [runtime tests](sbf-tests/tests) and [fixture build](scripts/build-whirlpool-test.sh).
 
-PaySH swap tests also execute unmodified Orca Whirlpool source pinned at `f2a3d13fa04eb15cf5b5a309ef9b226fd5d34e36`, with a checked source archive and locked dependencies. The test-only ELF stays outside release artifacts. `WHIRLPOOL_SBF_PATH` can select that fixture's compiled ELF; `PAYSH_SBF_PATH` selects an explicit PaySH ELF for before/after regression checks. Tests cover full input with existing WSOL and unsynced native donations, partial input rejection, and minimum-output failure with transaction rollback.
+## Deploy to Solana Testnet
 
-## ABI version 2
+Build first. Use fresh test keys outside the checkout. Check that the selected cluster supports sBPFv3. See [Solana deployment instructions](https://solana.com/docs/programs/deploying).
 
-`crates/interface/src/lib.rs` owns the Borsh layout: one-byte enum tags, little-endian integers and raw 32-byte keys/hashes. State has a 347-byte struct prefix in a 352-byte allocation. ABI 1 and its 320-byte state are rejected. PDA seeds: `[b"allowit-vault-v2", owner, vault_id]`. The state appends `authority: [u8;32]`, `action_limit: u64` and `instance_slot: u64` after `approved`. Initialization records the current chain slot. Close requires a later slot. Any subsequent recreation therefore has a newer instance identity, and cannot accept old execution approvals.
+```sh
+cluster=testnet
+key_dir="$HOME/.local/share/allowit-solana-testnet"
+mkdir -p "$key_dir"
+chmod 700 "$key_dir"
+solana-keygen new --no-bip39-passphrase --silent --outfile "$key_dir/deployer.json"
+solana-keygen new --no-bip39-passphrase --silent --outfile "$key_dir/policy.json"
+solana-keygen new --no-bip39-passphrase --silent --outfile "$key_dir/vault.json"
+solana-keygen new --no-bip39-passphrase --silent --outfile "$key_dir/paysh.json"
+solana --url "$cluster" genesis-hash
+solana --url "$cluster" --keypair "$key_dir/deployer.json" airdrop 5
+solana --url "$cluster" --keypair "$key_dir/deployer.json" balance
 
-Account order (`w` writable, `s` signer, others readonly):
+policy_size=$(wc -c < target/deploy/allowit_policy.so | tr -d ' ')
+solana --url "$cluster" --keypair "$key_dir/deployer.json" program deploy \
+  target/deploy/allowit_policy.so --program-id "$key_dir/policy.json" \
+  --max-len "$policy_size" --final
+solana --url "$cluster" --keypair "$key_dir/deployer.json" program deploy \
+  target/deploy/allowit_vault.so --program-id "$key_dir/vault.json"
+solana --url "$cluster" --keypair "$key_dir/deployer.json" program deploy \
+  target/deploy/allowit_paysh.so --program-id "$key_dir/paysh.json"
+
+policy_id=$(solana-keygen pubkey "$key_dir/policy.json")
+solana --url "$cluster" program show "$policy_id"
+solana --url "$cluster" program dump "$policy_id" /tmp/allowit-policy-deployed.so
+cmp target/deploy/allowit_policy.so /tmp/allowit-policy-deployed.so
+```
+
+`cluster=devnet` selects Solana Devnet with the same procedure. Faucet limits and storage rent can require more test SOL. Policy deployment is permanent: `--final` removes its upgrade authority. Exact allocation makes its deployed artifact hash match the built ELF.
+
+Vault and PaySH retain the deployer's upgrade authority in this example. That authority can replace custody code. Record program/ProgramData IDs, genesis hash, artifact hashes and authorities. Check each deployment before configuring the SDK or initializing vaults. PaySH also needs the selected cluster's token accounts, treasury and Whirlpool pool described in [its deployment requirements](docs/paysh.md).
+
+No verified AllowIt mainnet deployment address is recorded.
+
+## ABI and policy
+
+[ABI 2](crates/interface/src/lib.rs) uses Borsh, a 352-byte state allocation and PDA seeds `[b"allowit-vault-v2", owner, vault_id]`. ABI 1 state is rejected. Requests bind the exact instance and server commitment. Expiry cannot exceed chain time by 300 seconds.
+
+Account order (`w` writable, `s` signer):
 
 | Instruction | Accounts |
 | --- | --- |
@@ -52,22 +79,8 @@ Account order (`w` writable, `s` signer, others readonly):
 | Close | vault(w), owner(w,s), vault token(w), owner destination token(w), mint, SPL Token Program |
 | Unsupported | no accounts required |
 
-Initialize and SetPolicy carry `policy_source` and `policy_artifact`. Artifact identity hashes the complete deployed ELF allocation after the 45-byte loader header. Exact-size allocation makes this equal the `.so` hash; padded deployments require hashing their actual deployed bytes. Custody checks loader-v3 ownership, ProgramData linkage/canonical address, absent upgrade authority and matching artifact hash before invocation. Policy receives no accounts or vault signer. Its response is 77 bytes: ABI, u32 error, binding, source bundle, next spend. Custody offsets policy errors by 1000. The explicit Unsupported instruction (tag 7) returns custody error 100 (`UnsupportedMethod`). Unknown tags fail with `InvalidInstructionData`. Binding echoes the request digest; it is not proof of evaluation.
+Custody checks immutable policy ProgramData and deployed artifact identity before invocation. See [vault implementation](programs/vault/src/lib.rs) for instruction layouts and checks.
 
-Existing enum tags 0–7 retain their operation names. Initialize appends `action_limit: u64`. Transfer appends `expires_at: u64`, `commitment: [u8;32]` and `expected_instance_slot: u64` after amount, nonce and revision. The nonzero commitment identifies the server's exact assessed operation and request. Both transaction signatures bind this commitment and every instruction/account byte. Expiry uses Unix seconds and cannot exceed the observed chain time by 300 seconds. Tag 8 is SetActionLimit(value, expected_revision). Tag 9 is Close(expected_revision). Action and daily limits use six-decimal base units: one token equals `1_000_000` units. The `0..=50_000_000` ceiling therefore permits at most 50 tokens. Zero pauses execution.
+[Policy source](policy/policy.rs) calls `require_approval` and `enforce_daily_limit` from [policy_api.rs](policy/policy_api.rs). Custody commits spending and token movement atomically. The shared source bundle and executable hash are separate identities. Pin both with chain, ABI, program and authorities. Check sibling source copies with `python3 scripts/check-policy.py --peer ../OTHER_REPO`.
 
-Close transfers the entire balance to an owner-controlled token account, closes the empty vault token account, and drains/deallocates the vault state. Both accounts refund rent to the signing owner. It requires neither the executor nor the policy program. Clients retain operation history outside the closed accounts. Close includes `expected_instance_slot` after its revision and checks the exact instance. A state account can close only after its creation slot.
-
-## Deployment, authorities and costs
-
-Use a fresh test key and an explicitly selected test cluster. Deploy policy with `--final` and exact-size `--max-len`, then custody. Record program/ProgramData IDs, hashes, source bundle, toolchains, genesis hash, authority, parameters and initialization transaction. Use `solana program dump` to verify deployed bytes. Validate current cluster features for sBPFv3.
-
-Immutable policy code cannot be upgraded, closed or refunded. ABI 2 requires fresh program IDs and matching SDK artifact pins. Deploy new policy versions under new IDs and switch with owner-authorized SetPolicy, which clears approval. Custody's upgrade authority is a separate trust root: if retained, its holder can replace custody logic and control funds. Production requires an explicit authority/governance choice. Close affects only a mandate's state and token account. Shared executable programs remain separate.
-
-Query live `getMinimumBalanceForRentExemption` for storage; upload buffers can temporarily require additional capital. Loader-v3 closure refunds ProgramData, leaves the tiny program-address account and consumes fees. Shared program storage is paid once per deployment, while each vault pays for small state/token accounts.
-
-## Policy entrypoint and system functions
-
-`policy/policy.rs` contains one generated function, `execute`. It calls `require_approval` and `enforce_daily_limit` from `policy/policy_api.rs`. Approval, daily rollover, clock checks, overflow checks and the compiled parameter ceiling belong to this standard library. Custody commits the returned next daily spend atomically with token movement. Both files remain byte-identical to the existing portable source bundle. Solana-specific authority, instance, custody and per-action checks reside in the vault. The Solana adapter returns ABI 2 with unchanged numeric request encoding. This change does not implement a Stellar vault or change its adapter ABI.
-
-`python3 scripts/artifacts.py` prints a build manifest. Use `--output PATH` to save it.
+Save signed transaction bytes before broadcast. Check the original transaction after an uncertain result before signing a replacement. `python3 scripts/artifacts.py --output PATH` saves a build manifest.
