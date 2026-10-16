@@ -222,6 +222,7 @@ jobs:
           test "$REVIEWED_SHA_REPOSITORY" = "$GITHUB_SHA"
           python3 - <<'PY'
           import os
+          alphabet = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"
           names = [
               "EXPECTED_DEPLOYER",
               "EXPECTED_POLICY_PROGRAM",
@@ -235,6 +236,16 @@ jobs:
               raise SystemExit("all Devnet public identity variables must be configured")
           if len(set(values)) != len(values):
               raise SystemExit("all Devnet deployer, program, buffer and executor identities must differ")
+          for name, value in zip(names, values):
+              if any(character not in alphabet for character in value):
+                  raise SystemExit(f"{name} is not a base58 Solana public key")
+              number = 0
+              for character in value:
+                  number = number * 58 + alphabet.index(character)
+              raw = number.to_bytes((number.bit_length() + 7) // 8, "big")
+              decoded = b"\0" * (len(value) - len(value.lstrip("1"))) + raw
+              if len(decoded) != 32:
+                  raise SystemExit(f"{name} is not a 32-byte Solana public key")
           PY
       - name: Install pinned Devnet deployment CLI
         run: |
@@ -302,8 +313,8 @@ jobs:
                   raise SystemExit(f"required GitHub Actions secret is missing: {variable}")
               try:
                   value = json.loads(base64.b64decode(encoded, validate=True))
-              except Exception as error:
-                  raise SystemExit(f"{variable} is not base64 of Solana keypair JSON") from error
+              except Exception:
+                  raise SystemExit(f"{variable} is not base64 of Solana keypair JSON") from None
               if (
                   not isinstance(value, list)
                   or len(value) != 64
@@ -342,8 +353,8 @@ jobs:
               try:
                   with urllib.request.urlopen(request, timeout=30) as response:
                       payload = json.load(response)
-              except Exception as error:
-                  raise SystemExit(f"Devnet RPC transport failed for {method}") from error
+              except Exception:
+                  raise SystemExit(f"Devnet RPC transport failed for {method}") from None
               if "error" in payload:
                   raise SystemExit(f"Devnet RPC rejected {method}")
               return payload["result"]
@@ -366,6 +377,8 @@ jobs:
           EXPECTED_DEPLOYER: ${{ vars.ALLOWIT_DEVNET_DEPLOYER_PUBLIC_KEY }}
           EXPECTED_POLICY_PROGRAM: ${{ vars.ALLOWIT_DEVNET_POLICY_PROGRAM_ID }}
           EXPECTED_VAULT_PROGRAM: ${{ vars.ALLOWIT_DEVNET_VAULT_PROGRAM_ID }}
+          EXPECTED_POLICY_BUFFER: ${{ vars.ALLOWIT_DEVNET_POLICY_BUFFER_PUBLIC_KEY }}
+          EXPECTED_VAULT_BUFFER: ${{ vars.ALLOWIT_DEVNET_VAULT_BUFFER_PUBLIC_KEY }}
         run: |
           set -euo pipefail
           cat > "$RUNNER_TEMP/inspect-loader.py" <<'PY'
@@ -392,8 +405,8 @@ jobs:
               try:
                   with urllib.request.urlopen(request, timeout=30) as response:
                       payload = json.load(response)
-              except Exception as error:
-                  raise SystemExit("Devnet RPC transport failed while inspecting loader state") from error
+              except Exception:
+                  raise SystemExit("Devnet RPC transport failed while inspecting loader state") from None
               if "error" in payload:
                   raise SystemExit("Devnet RPC rejected loader-state inspection")
               return payload["result"]["value"]
@@ -444,8 +457,10 @@ jobs:
               print("immutable_exact")
           elif authority != expected_authority:
               raise SystemExit("program has an unexpected upgrade authority")
+          elif not exact:
+              raise SystemExit("mutable program bytes do not match the reviewed artifact; refusing replacement")
           else:
-              print("mutable_exact" if exact else "mutable_replace")
+              print("mutable_exact")
           PY
 
           inspect() {
@@ -465,8 +480,8 @@ jobs:
           try:
               with urllib.request.urlopen(request, timeout=30) as response:
                   payload = json.load(response)
-          except Exception as error:
-              raise SystemExit("Devnet RPC transport failed while reading deployer balance") from error
+          except Exception:
+              raise SystemExit("Devnet RPC transport failed while reading deployer balance") from None
           if "error" in payload:
               raise SystemExit("Devnet RPC rejected deployer balance query")
           print(payload["result"]["value"])
@@ -476,7 +491,7 @@ jobs:
             local name="$1" program_id="$2" expected_bytes="$3" expected_hash="$4"
             local dump="$RUNNER_TEMP/${name}-deployed.so"
             rm -f "$dump"
-            if ! solana --url "$ALLOWIT_DEVNET_RPC_URL" program dump "$program_id" "$dump" \
+            if ! solana --url "$ALLOWIT_DEVNET_RPC_URL" --commitment finalized program dump "$program_id" "$dump" \
               > "$RUNNER_TEMP/${name}-dump.log" 2>&1; then
               echo "$name finalized byte dump failed; no raw CLI output was exposed." >&2
               exit 1
@@ -489,38 +504,46 @@ jobs:
             local buffer_key="$5" buffer_id="$6" expected_bytes="$7" expected_hash="$8"
             local state
             state="$(inspect program "$program_id" "$expected_bytes" "$expected_hash" "$EXPECTED_DEPLOYER")"
-            if [ "$state" = "immutable_exact" ]; then
-              verify_dump "$name" "$program_id" "$expected_bytes" "$expected_hash"
-              echo "$name is already immutable and byte-exact; no transaction submitted."
-              return
-            fi
             case "$state" in
-              missing|incomplete|mutable_exact|mutable_replace) ;;
-              *) echo "$name returned an unsupported loader state." >&2; exit 1 ;;
+              immutable_exact)
+                verify_dump "$name" "$program_id" "$expected_bytes" "$expected_hash"
+                echo "$name is already immutable and byte-exact; no transaction submitted."
+                return
+                ;;
+              mutable_exact)
+                verify_dump "$name" "$program_id" "$expected_bytes" "$expected_hash"
+                echo "$name is mutable but byte-exact; skipping upload and finalizing authority."
+                ;;
+              missing|incomplete)
+                if [ "$(finalized_balance "$EXPECTED_DEPLOYER")" -lt 1300000000 ]; then
+                  echo "$name needs at least 1.3 Devnet SOL in the deployer before an upload or resume." >&2
+                  exit 1
+                fi
+                inspect buffer "$buffer_id" "$expected_bytes" "$expected_hash" "$EXPECTED_DEPLOYER" \
+                  > "$RUNNER_TEMP/${name}-buffer-state.txt"
+                if ! solana \
+                  --url "$ALLOWIT_DEVNET_RPC_URL" \
+                  --keypair "$RUNNER_TEMP/allowit-devnet-deployer.json" \
+                  --commitment finalized \
+                  program deploy "$artifact" \
+                  --program-id "$program_key" \
+                  --buffer "$buffer_key" \
+                  --upgrade-authority "$RUNNER_TEMP/allowit-devnet-deployer.json" \
+                  --max-len "$expected_bytes" \
+                  --max-sign-attempts 10 \
+                  --use-rpc \
+                  > "$RUNNER_TEMP/${name}-deploy.log" 2>&1; then
+                  echo "$name deploy failed; rerun with the same persistent program and buffer identities. Raw CLI output remains private to this ephemeral runner." >&2
+                  exit 1
+                fi
+                test "$(inspect program "$program_id" "$expected_bytes" "$expected_hash" "$EXPECTED_DEPLOYER")" = "mutable_exact"
+                verify_dump "$name" "$program_id" "$expected_bytes" "$expected_hash"
+                ;;
+              *)
+                echo "$name returned an unsupported loader state." >&2
+                exit 1
+                ;;
             esac
-            if [ "$(finalized_balance "$EXPECTED_DEPLOYER")" -lt 1300000000 ]; then
-              echo "$name needs at least 1.3 Devnet SOL in the deployer before an upload or resume." >&2
-              exit 1
-            fi
-            inspect buffer "$buffer_id" "$expected_bytes" "$expected_hash" "$EXPECTED_DEPLOYER" \
-              > "$RUNNER_TEMP/${name}-buffer-state.txt"
-            if ! solana \
-              --url "$ALLOWIT_DEVNET_RPC_URL" \
-              --keypair "$RUNNER_TEMP/allowit-devnet-deployer.json" \
-              --commitment finalized \
-              program deploy "$artifact" \
-              --program-id "$program_key" \
-              --buffer "$buffer_key" \
-              --upgrade-authority "$RUNNER_TEMP/allowit-devnet-deployer.json" \
-              --max-len "$expected_bytes" \
-              --max-sign-attempts 10 \
-              --use-rpc \
-              > "$RUNNER_TEMP/${name}-deploy.log" 2>&1; then
-              echo "$name deploy failed; rerun with the same persistent program and buffer identities. Raw CLI output remains private to this ephemeral runner." >&2
-              exit 1
-            fi
-            test "$(inspect program "$program_id" "$expected_bytes" "$expected_hash" "$EXPECTED_DEPLOYER")" = "mutable_exact"
-            verify_dump "$name" "$program_id" "$expected_bytes" "$expected_hash"
             if ! solana \
               --url "$ALLOWIT_DEVNET_RPC_URL" \
               --keypair "$RUNNER_TEMP/allowit-devnet-deployer.json" \
@@ -540,18 +563,19 @@ jobs:
             policy "$RUNNER_TEMP/native-release/allowit_policy.so" \
             "$EXPECTED_POLICY_PROGRAM" "$RUNNER_TEMP/allowit-devnet-policy-program.json" \
             "$RUNNER_TEMP/allowit-devnet-policy-buffer.json" \
-            "${{ vars.ALLOWIT_DEVNET_POLICY_BUFFER_PUBLIC_KEY }}" \
+            "$EXPECTED_POLICY_BUFFER" \
             "$PINNED_POLICY_BYTES" "$PINNED_POLICY_SHA256"
           deploy_one \
             vault "$RUNNER_TEMP/native-release/allowit_vault.so" \
             "$EXPECTED_VAULT_PROGRAM" "$RUNNER_TEMP/allowit-devnet-vault-program.json" \
             "$RUNNER_TEMP/allowit-devnet-vault-buffer.json" \
-            "${{ vars.ALLOWIT_DEVNET_VAULT_BUFFER_PUBLIC_KEY }}" \
+            "$EXPECTED_VAULT_BUFFER" \
             "$PINNED_VAULT_BYTES" "$PINNED_VAULT_SHA256"
       - name: Fund only the bound autonomous executor when needed
         env:
           ALLOWIT_DEVNET_RPC_URL: ${{ secrets.ALLOWIT_DEVNET_RPC_URL }}
           EXPECTED_EXECUTOR: ${{ vars.ALLOWIT_DEVNET_EXECUTOR_PUBLIC_KEY }}
+          EXPECTED_DEPLOYER: ${{ vars.ALLOWIT_DEVNET_DEPLOYER_PUBLIC_KEY }}
         run: |
           set -euo pipefail
           balance() {
@@ -568,8 +592,8 @@ jobs:
           try:
               with urllib.request.urlopen(request, timeout=30) as response:
                   payload = json.load(response)
-          except Exception as error:
-              raise SystemExit("Devnet RPC transport failed while reading executor balance") from error
+          except Exception:
+              raise SystemExit("Devnet RPC transport failed while reading executor balance") from None
           if "error" in payload:
               raise SystemExit("Devnet RPC rejected executor balance query")
           print(payload["result"]["value"])
@@ -577,7 +601,7 @@ jobs:
           }
           before="$(balance "$EXPECTED_EXECUTOR")"
           if [ "$before" -lt 50000000 ]; then
-            deployer_balance="$(balance "${{ vars.ALLOWIT_DEVNET_DEPLOYER_PUBLIC_KEY }}")"
+            deployer_balance="$(balance "$EXPECTED_DEPLOYER")"
             if [ "$deployer_balance" -lt 101000000 ]; then
               echo "Deployer lacks the fixed 0.1 Devnet SOL executor grant plus fees." >&2
               exit 1
@@ -628,8 +652,8 @@ jobs:
               try:
                   with urllib.request.urlopen(request, timeout=30) as response:
                       payload = json.load(response)
-              except Exception as error:
-                  raise SystemExit(f"Devnet RPC transport failed for {method}") from error
+              except Exception:
+                  raise SystemExit(f"Devnet RPC transport failed for {method}") from None
               if "error" in payload:
                   raise SystemExit(f"Devnet RPC rejected {method}")
               return payload["result"]
