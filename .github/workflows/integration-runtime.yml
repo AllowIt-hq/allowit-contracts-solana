@@ -1,4 +1,5 @@
 name: Solana runtime smoke
+
 on:
   push:
     branches: [main]
@@ -9,18 +10,46 @@ on:
         description: Run the full integration regression suite
         type: boolean
         default: false
+      deploy:
+        description: Deploy the pinned native release immutably to Solana Devnet
+        type: boolean
+        default: false
+      reviewed_sha:
+        description: Exact reviewed workflow commit SHA (required for deployment)
+        type: string
+        default: ""
+      confirmation:
+        description: Type deploy-immutable-622f8b-to-solana-devnet
+        type: string
+        default: ""
+
 permissions:
   contents: read
+
 concurrency:
   group: solana-runtime-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: false
+
+env:
+  PINNED_NATIVE_REVISION: 622f8b8054b4a8c533ae9ebd4978c48f7ea9c628
+  PINNED_SOURCE_BUNDLE: 793db01595fbcb15503914744e49b45f470e9ca1d2805aceadeac00a0d843fc7
+  PINNED_POLICY_BYTES: "1696"
+  PINNED_POLICY_SHA256: cb55e2015dbc437cce58a53727c947cd1d8db75453623c5e53a4e4ea15b40dde
+  PINNED_VAULT_BYTES: "110680"
+  PINNED_VAULT_SHA256: 92e1849f9072fb0c342b8cd4513faa5e575b77ee903397dde1fe06bb0f3fcae0
+  DEVNET_GENESIS_HASH: EtWTRABZaYq6iMfeYKouRu166VU2xqa1wcaWoxPkrZBG
+  DEVNET_USDC_MINT: 4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU
+  AGAVE_ARCHIVE_SHA256: c97289a8abb1d0efb497d8b5cb285baabd9b7f8ea6647f5d145c5dc8ff3611e8
+
 jobs:
   smoke:
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@1.98.0
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@16c20dfc2b8bc5cd72c3bf5072a9453664776e70 # 1.98.0
         with:
           components: rustfmt
       - uses: Swatinem/rust-cache@v2
@@ -31,14 +60,16 @@ jobs:
             sbf-tests -> target
       - name: Install pinned Agave toolchain
         run: |
+          set -euo pipefail
           sudo apt-get update -qq
           sudo apt-get install -y libudev-dev pkg-config
-          curl -fsSL https://github.com/anza-xyz/agave/releases/download/v4.3.0/solana-release-x86_64-unknown-linux-gnu.tar.bz2 -o /tmp/agave.tar.bz2
-          echo 'c97289a8abb1d0efb497d8b5cb285baabd9b7f8ea6647f5d145c5dc8ff3611e8  /tmp/agave.tar.bz2' | sha256sum -c -
-          tar -xjf /tmp/agave.tar.bz2 -C /tmp
-          echo /tmp/solana-release/bin >> "$GITHUB_PATH"
+          curl -fsSL https://github.com/anza-xyz/agave/releases/download/v4.3.0/solana-release-x86_64-unknown-linux-gnu.tar.bz2 -o "$RUNNER_TEMP/agave.tar.bz2"
+          echo "$AGAVE_ARCHIVE_SHA256  $RUNNER_TEMP/agave.tar.bz2" | sha256sum -c -
+          tar -xjf "$RUNNER_TEMP/agave.tar.bz2" -C "$RUNNER_TEMP"
+          echo "$RUNNER_TEMP/solana-release/bin" >> "$GITHUB_PATH"
       - name: Compile local runtime programs
         run: |
+          set -euo pipefail
           cargo build-sbf --manifest-path programs/policy/Cargo.toml --arch v3 --optimize-size --tools-version v1.57 -- --locked
           cargo build-sbf --manifest-path programs/vault/Cargo.toml --arch v3 --optimize-size --tools-version v1.57 -- --locked
           cargo build-sbf --manifest-path programs/paysh/Cargo.toml --arch v3 --optimize-size --tools-version v1.57 -- --locked
@@ -57,3 +88,102 @@ jobs:
         env:
           SBF_OUT_DIR: ${{ github.workspace }}/target/deploy
         run: cargo test --manifest-path sbf-tests/Cargo.toml --locked --test vault --test paysh
+
+  native_release:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - name: Check out the reviewed native contract release
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ env.PINNED_NATIVE_REVISION }}
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@16c20dfc2b8bc5cd72c3bf5072a9453664776e70 # 1.98.0
+        with:
+          components: rustfmt
+      - name: Install pinned Agave toolchain
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y libudev-dev pkg-config
+          curl -fsSL https://github.com/anza-xyz/agave/releases/download/v4.3.0/solana-release-x86_64-unknown-linux-gnu.tar.bz2 -o "$RUNNER_TEMP/agave.tar.bz2"
+          echo "$AGAVE_ARCHIVE_SHA256  $RUNNER_TEMP/agave.tar.bz2" | sha256sum -c -
+          tar -xjf "$RUNNER_TEMP/agave.tar.bz2" -C "$RUNNER_TEMP"
+          echo "$RUNNER_TEMP/solana-release/bin" >> "$GITHUB_PATH"
+      - name: Verify source identity and host tests
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$PINNED_NATIVE_REVISION"
+          test "$(python3 scripts/check-policy.py)" = "$PINNED_SOURCE_BUNDLE"
+          cargo fmt --all --check
+          cargo test --workspace --locked
+      - name: Build exact policy and custody programs
+        run: |
+          set -euo pipefail
+          cargo build-sbf --manifest-path programs/policy/Cargo.toml --arch v3 --optimize-size --tools-version v1.57 -- --locked
+          cargo build-sbf --manifest-path programs/vault/Cargo.toml --arch v3 --optimize-size --tools-version v1.57 -- --locked
+      - name: Run full compiled vault regression suite
+        env:
+          SBF_OUT_DIR: ${{ github.workspace }}/target/deploy
+        run: |
+          set -euo pipefail
+          cargo fmt --manifest-path sbf-tests/Cargo.toml --check
+          cargo test --manifest-path sbf-tests/Cargo.toml --locked --test vault -- --nocapture
+      - name: Package only the pinned public release
+        run: |
+          set -euo pipefail
+          release_dir="$RUNNER_TEMP/native-release"
+          mkdir -p "$release_dir"
+          install -m 0444 target/deploy/allowit_policy.so "$release_dir/allowit_policy.so"
+          install -m 0444 target/deploy/allowit_vault.so "$release_dir/allowit_vault.so"
+          test "$(stat -c %s "$release_dir/allowit_policy.so")" = "$PINNED_POLICY_BYTES"
+          test "$(sha256sum "$release_dir/allowit_policy.so" | cut -d' ' -f1)" = "$PINNED_POLICY_SHA256"
+          test "$(stat -c %s "$release_dir/allowit_vault.so")" = "$PINNED_VAULT_BYTES"
+          test "$(sha256sum "$release_dir/allowit_vault.so" | cut -d' ' -f1)" = "$PINNED_VAULT_SHA256"
+          python3 - "$release_dir/release.json" <<'PY'
+          import json, os, pathlib, sys
+          release = {
+              "schema": 1,
+              "network": "solana:devnet",
+              "genesisHash": os.environ["DEVNET_GENESIS_HASH"],
+              "contractRevision": os.environ["PINNED_NATIVE_REVISION"],
+              "workflowRevision": os.environ["GITHUB_SHA"],
+              "sourceBundle": os.environ["PINNED_SOURCE_BUNDLE"],
+              "toolchain": {
+                  "rust": "1.98.0",
+                  "agave": "4.3.0",
+                  "platformTools": "1.57",
+                  "sbfArch": "v3",
+              },
+              "mint": os.environ["DEVNET_USDC_MINT"],
+              "artifacts": {
+                  "policy": {
+                      "file": "allowit_policy.so",
+                      "bytes": int(os.environ["PINNED_POLICY_BYTES"]),
+                      "sha256": os.environ["PINNED_POLICY_SHA256"],
+                  },
+                  "vault": {
+                      "file": "allowit_vault.so",
+                      "bytes": int(os.environ["PINNED_VAULT_BYTES"]),
+                      "sha256": os.environ["PINNED_VAULT_SHA256"],
+                  },
+              },
+          }
+          pathlib.Path(sys.argv[1]).write_text(
+              json.dumps(release, indent=2, sort_keys=True) + "\n",
+              encoding="utf-8",
+          )
+          PY
+          (
+            cd "$release_dir"
+            sha256sum allowit_policy.so allowit_vault.so release.json > SHA256SUMS
+            sha256sum -c SHA256SUMS
+          )
+      - name: Upload exact native release
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: native-release-${{ github.sha }}
+          path: ${{ runner.temp }}/native-release
+          if-no-files-found: error
+          retention-days: 1
