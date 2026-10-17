@@ -25,41 +25,49 @@ python3 scripts/artifacts.py
 
 Mollusk tests execute compiled programs and SPL Token transfers. The Whirlpool fixture uses pinned Orca source. See [runtime tests](sbf-tests/tests) and [fixture build](scripts/build-whirlpool-test.sh).
 
-## Deploy to Solana Testnet
+## Deploy native vaults to Solana Devnet
 
-Build first. Use fresh test keys outside the checkout. Check that the selected cluster supports sBPFv3. See [Solana deployment instructions](https://solana.com/docs/programs/deploying).
+Build the exact contract revision and artifacts pinned by the consuming SDK first; the current branch is not necessarily that release. Use fresh test keys outside the checkout. Check that the selected cluster supports sBPFv3. See [Solana deployment instructions](https://solana.com/docs/programs/deploying).
+
+The current `native-vault-v2` SDK verifies the source bundle, exact deployed artifact bytes and absence of an upgrade authority for **both** programs. Verify the pinned hashes before using `--final`: it permanently removes the ability to upgrade that program. A deployment with another artifact or a remaining upgrade authority is not compatible with this profile.
 
 ```sh
-cluster=testnet
-key_dir="$HOME/.local/share/allowit-solana-testnet"
+cluster=devnet
+key_dir="$HOME/.local/share/allowit-solana-devnet"
 mkdir -p "$key_dir"
 chmod 700 "$key_dir"
 solana-keygen new --no-bip39-passphrase --silent --outfile "$key_dir/deployer.json"
 solana-keygen new --no-bip39-passphrase --silent --outfile "$key_dir/policy.json"
 solana-keygen new --no-bip39-passphrase --silent --outfile "$key_dir/vault.json"
-solana-keygen new --no-bip39-passphrase --silent --outfile "$key_dir/paysh.json"
 solana --url "$cluster" genesis-hash
 solana --url "$cluster" --keypair "$key_dir/deployer.json" airdrop 5
 solana --url "$cluster" --keypair "$key_dir/deployer.json" balance
 
 policy_size=$(wc -c < target/deploy/allowit_policy.so | tr -d ' ')
+vault_size=$(wc -c < target/deploy/allowit_vault.so | tr -d ' ')
 solana --url "$cluster" --keypair "$key_dir/deployer.json" program deploy \
   target/deploy/allowit_policy.so --program-id "$key_dir/policy.json" \
   --max-len "$policy_size" --final
 solana --url "$cluster" --keypair "$key_dir/deployer.json" program deploy \
-  target/deploy/allowit_vault.so --program-id "$key_dir/vault.json"
-solana --url "$cluster" --keypair "$key_dir/deployer.json" program deploy \
-  target/deploy/allowit_paysh.so --program-id "$key_dir/paysh.json"
+  target/deploy/allowit_vault.so --program-id "$key_dir/vault.json" \
+  --max-len "$vault_size" --final
 
 policy_id=$(solana-keygen pubkey "$key_dir/policy.json")
+vault_id=$(solana-keygen pubkey "$key_dir/vault.json")
+dump_dir=$(mktemp -d)
 solana --url "$cluster" program show "$policy_id"
-solana --url "$cluster" program dump "$policy_id" /tmp/allowit-policy-deployed.so
-cmp target/deploy/allowit_policy.so /tmp/allowit-policy-deployed.so
+solana --url "$cluster" program show "$vault_id"
+solana --url "$cluster" program dump "$policy_id" "$dump_dir/policy.so"
+solana --url "$cluster" program dump "$vault_id" "$dump_dir/vault.so"
+cmp target/deploy/allowit_policy.so "$dump_dir/policy.so"
+cmp target/deploy/allowit_vault.so "$dump_dir/vault.so"
 ```
 
-`cluster=devnet` selects Solana Devnet with the same procedure. Faucet limits and storage rent can require more test SOL. Policy deployment is permanent: `--final` removes its upgrade authority. Exact allocation makes its deployed artifact hash match the built ELF.
+`cluster=testnet` selects Solana Testnet with the same procedure and a separate key directory. Moving between clusters means a new deployment, new vault state and a new owner-approved setup; it does not migrate balances or existing approvals. Faucet limits and storage rent can require more test SOL. Exact allocation avoids trailing capacity bytes changing the deployed artifact hash.
 
-Vault and PaySH retain the deployer's upgrade authority in this example. That authority can replace custody code. Record program/ProgramData IDs, genesis hash, artifact hashes and authorities. Check each deployment before configuring the SDK or initializing vaults. PaySH also needs the selected cluster's token accounts, treasury and Whirlpool pool described in [its deployment requirements](docs/paysh.md).
+Record both program/ProgramData IDs, genesis hash, artifact hashes and absent upgrade authorities. Configure the SDK/backend with that cluster's mint, executor and server authority, and verify the deployment before initializing vaults. Native owner setup can combine creation, initial funding and approval into one owner-signed transaction; subsequent execution uses executor and server-authority signatures. Revocation is a separate owner-signed transaction.
+
+The separate PaySH profile is not provisioned by these native-vault commands. It needs its own compatible program and the selected cluster's token accounts, treasury and Whirlpool pool described in [its deployment requirements](docs/paysh.md). A successful native token transfer alone is not proof of a paid API response.
 
 ## ABI and policy
 
