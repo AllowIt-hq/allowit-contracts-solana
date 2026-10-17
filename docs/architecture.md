@@ -11,7 +11,7 @@ A program-controlled wallet holds assets in program-derived accounts (PDAs). Its
 ```mermaid
 flowchart LR
     O[Owner] -->|configure, pause, recover| C[Custody program and PDA state]
-    A[Agent request] --> E[Native policy engine]
+    A[Agent request] --> E["Policy engine (offchain)"]
     E -->|approve exact request| S[Authorized signer]
     S -->|ordinary transaction| W[Wallet assets]
     S -->|bounded signed request| C
@@ -22,11 +22,11 @@ These routes share policy meaning and exact action bindings. They do not share c
 
 ## Solana interfaces
 
-The [native vault](../programs/vault/src/lib.rs) uses [ABI 2](../crates/interface/src/lib.rs). Owner, executor and server authority are distinct. Automated transfers require executor and server signatures on the exact transaction. The vault checks approval, mint, recipient token account, action/day limits, nonce, revision, instance identity and expiry. The server commitment attests offchain assessment. It does not prove semantic correctness.
+The [native vault](../programs/vault/src/lib.rs) uses [ABI 2](../crates/interface/src/lib.rs). Owner, executor and server authority are distinct. Automated transfers require executor and server signatures on the exact transaction. The vault checks approval, mint, action/day limits, nonce, revision, instance identity and expiry. It checks recipient mint and rejects vault-owned destinations. Transaction signatures bind the exact recipient. Other recipient restrictions depend on offchain checks unless custody code independently enforces them. The server commitment attests offchain assessment. It does not prove semantic correctness.
 
 The vault invokes its pinned immutable [policy helper](../programs/policy/src/lib.rs) with no custody accounts. This helper checks the [daily-limit template](../policy/policy.rs). It does not execute arbitrary owner-authored policy or call the offchain engine. The vault checks the returned request/source binding and independently checks the expected cumulative spend before committing state and token movement atomically.
 
-Owner withdrawal, close, `Approve(false)` and `SetActionLimit` require no evaluator signature or policy-helper invocation. `Approve(false)` still requires the configured policy account. `SetDailyLimit`, `SetPolicy` and `Approve(true)` invoke the pinned helper. Funding and policy changes preserve consumed spending. The native vault exposes direct classic SPL Token transfers, with no general target invocation interface.
+Owner withdrawal, close, `Approve(false)` and `SetActionLimit` require no evaluator signature or policy-helper invocation. `Approve(false)` still requires the configured policy account. `SetDailyLimit` and `Approve(true)` invoke the pinned helper. `SetPolicy` verifies and invokes the newly supplied immutable helper before pinning it. Funding and policy changes preserve consumed spending. The native vault exposes direct classic SPL Token transfers, with no general target invocation interface.
 
 The separate [PaySH profile](paysh.md) verifies an evaluator's Ed25519 signature over its domain-separated request. It independently enforces owner configuration, service admission, replay receipts, budgets and exact payment or admitted swap effects. Public submission can relay an accepted request unless owner-only execution applies. Owner pause and recovery bypass evaluator approval. PaySH and the native vault retain different ABIs, signing rules, counters and recovery paths.
 
@@ -34,7 +34,7 @@ The separate [PaySH profile](paysh.md) verifies an evaluator's Ed25519 signature
 
 A per-vault owner controls only the operations admitted by its custody program. That owner does not control the loader upgrade authority of a shared program. An upgrade authority can replace custody checks for every PDA controlled by that program. An immutable policy helper cannot contain a compromised custody-program upgrade authority.
 
-For owner-contained custody, use an immutable custody release or a distinct custody deployment under the owner's selected upgrade governance. An immutable shared release amortizes code across independent PDA state. Kernel fixes then require an owner-authorized migration to a new release. A separate owner-controlled deployment permits upgrades under that owner's governance. A mutable system-managed custody program requires explicit trust in its upgrade authority.
+For owner-contained custody, use an immutable custody release or a distinct custody deployment under the owner's selected upgrade governance. An immutable shared release amortizes code across independent PDA state. Custody fixes then require an owner-authorized migration to a new release. A separate owner-controlled deployment permits upgrades under that owner's governance. A mutable system-managed custody program requires explicit trust in its upgrade authority.
 
 Engine administration must control only the engine. It must not control custody upgrades, owner recovery, installed limits or agent delegation. Stellar's owner-selected wallet Wasm and Solana's loader authority require different deployment arrangements to preserve this boundary.
 
