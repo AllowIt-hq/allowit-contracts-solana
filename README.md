@@ -6,6 +6,8 @@ The owner funds, approves, tunes, withdraws and closes a vault. Payments require
 
 Funding preserves spending counters. Limits use UTC days and six-decimal units: `1_000_000` units = one token. The `daily_limit` ceiling is `50_000_000`. Zero pauses spending. Changing policy clears approval.
 
+[Wallet signing and contract custody](docs/architecture.md) describes policy, signing and owner-control boundaries.
+
 ## Build and test
 
 Use Rust 1.98.0, Agave 4.3.0 and platform-tools 1.57.
