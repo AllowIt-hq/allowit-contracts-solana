@@ -1,8 +1,7 @@
 name: Whirlpool integration smoke
 on:
-  push:
-    branches: [main]
-  pull_request:
+  schedule:
+    - cron: "11 6 * * *"
   workflow_dispatch:
     inputs:
       full:
@@ -50,7 +49,7 @@ jobs:
           cargo test --manifest-path sbf-tests/Cargo.toml --locked --test paysh_whirlpool real_whirlpool_full_input_preserves_prior_wsol_and_records_budget -- --exact --nocapture 2>&1 | tee "$RUNNER_TEMP/smoke.log"
           grep -F "1 passed; 0 failed" "$RUNNER_TEMP/smoke.log"
       - name: Full Whirlpool regressions
-        if: github.event_name == 'workflow_dispatch' && inputs.full
+        if: github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.full)
         env:
           SBF_OUT_DIR: ${{ github.workspace }}/target/deploy
         run: cargo test --manifest-path sbf-tests/Cargo.toml --locked --test paysh_whirlpool
