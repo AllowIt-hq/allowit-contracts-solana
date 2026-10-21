@@ -1,9 +1,8 @@
 name: Solana runtime smoke
 
 on:
-  push:
-    branches: [main]
-  pull_request:
+  schedule:
+    - cron: "31 5 * * *"
   workflow_dispatch:
     inputs:
       full:
@@ -27,7 +26,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: solana-runtime-${{ github.ref }}
+  group: solana-runtime-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
   cancel-in-progress: false
 
 env:
@@ -84,7 +83,7 @@ jobs:
           cargo test --manifest-path sbf-tests/Cargo.toml --locked --test paysh pays_fee_then_pays_vendor_and_consumes_nonce -- --exact --nocapture 2>&1 | tee "$RUNNER_TEMP/smoke.log"
           grep -F "1 passed; 0 failed" "$RUNNER_TEMP/smoke.log"
       - name: Full local runtime regressions
-        if: github.event_name == 'workflow_dispatch' && inputs.full
+        if: github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.full)
         env:
           SBF_OUT_DIR: ${{ github.workspace }}/target/deploy
         run: cargo test --manifest-path sbf-tests/Cargo.toml --locked --test vault --test paysh
