@@ -126,6 +126,9 @@ impl CooperatingClient {
         if response["status"] != "delivered"
             || response["requestHash"] != request_hash
             || response["challengeHash"] != challenge_hash
+            || !response
+                .as_object()
+                .is_some_and(|m| m.contains_key("response"))
         {
             return Err(fault(
                 503,
@@ -270,6 +273,10 @@ mod tests {
                 json!({"status":"delivered","requestHash":"request","challengeHash":"challenge","response":{"ok":true}}),
                 Recovery::Delivered(json!({"ok":true})),
             ),
+            (
+                json!({"status":"delivered","requestHash":"request","challengeHash":"challenge","response":null}),
+                Recovery::Delivered(Value::Null),
+            ),
         ] {
             let (client, rx, handle) = server(200, response.to_string());
             assert_eq!(
@@ -291,6 +298,23 @@ mod tests {
             503
         );
         rx.recv().unwrap();
+        handle.join().unwrap();
+    }
+    #[test]
+    fn recovery_rejects_delivered_status_without_response() {
+        let (client, rx, handle) = server(
+            200,
+            json!({"status":"delivered","requestHash":"request","challengeHash":"challenge"})
+                .to_string(),
+        );
+        assert_eq!(
+            client
+                .recover("id", "request", "challenge")
+                .unwrap_err()
+                .status,
+            503
+        );
+        assert!(rx.recv().unwrap().starts_with("POST /status "));
         handle.join().unwrap();
     }
     #[test]

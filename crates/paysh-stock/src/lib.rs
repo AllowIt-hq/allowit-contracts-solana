@@ -18,6 +18,8 @@ use base64::{
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::{collections::BTreeMap, time::Duration};
+pub const SERVICE_ID: &str = "google-airquality-current";
+pub const AMOUNT_USDC: u64 = 1_000;
 const ENDPOINT: &str = "https://airquality.google.gateway-402.com/v1/currentConditions:lookup";
 const MEMO: &str = "MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr";
 const COMPUTE: &str = "ComputeBudget111111111111111111111111111111";
@@ -352,7 +354,7 @@ fn validate_charge_inner(
     let c: Charge = serde_json::from_slice(&raw).map_err(|_| denied())?;
     let amount = units(&c.amount)?;
     if amount == 0
-        || amount > 1000
+        || amount > AMOUNT_USDC
         || amount > paid
         || c.currency != MAINNET_MINT
         || c.method_details.network != "mainnet"
