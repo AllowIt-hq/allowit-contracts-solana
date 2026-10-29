@@ -17,9 +17,12 @@ dependencies = [
 [[package]]
 name = "allowit-client-core"
 version = "0.1.0"
-source = "git+https://github.com/AllowIt-hq/allowit-sdk.git?rev=d99bca0001f86d04b2066e21e3f5ce089acb998f#d99bca0001f86d04b2066e21e3f5ce089acb998f"
+source = "git+https://github.com/AllowIt-hq/allowit-sdk.git?rev=d9a22d3c74667d41303f147ee4ba2e442cea3767#d9a22d3c74667d41303f147ee4ba2e442cea3767"
 dependencies = [
+ "libc",
+ "serde",
  "serde_json",
+ "sha2 0.10.9",
  "url",
 ]
 
