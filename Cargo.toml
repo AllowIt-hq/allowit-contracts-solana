@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/interface", "programs/policy", "programs/vault", "programs/paysh", "crates/paysh-interface"]
+members = ["crates/interface", "programs/policy", "programs/vault", "programs/paysh", "crates/paysh-interface", "crates/solana-vendor"]
 exclude = ["sbf-tests"]
 resolver = "2"
 [workspace.dependencies]
