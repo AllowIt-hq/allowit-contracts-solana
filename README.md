@@ -4,6 +4,8 @@ Shared Solana custody and Rust policy programs enforce owner-approved spending t
 
 The [Solana vendor crate](crates/solana-vendor/README.md) provides host adapters for the SDK client, including retained PaySH operation reconciliation.
 
+[Host service packages](docs/services.md) provide the SDK with PaySH protocols, discovery and service implementations.
+
 The owner funds, approves, tunes, withdraws and closes a vault. Payments require the executor and server authority to sign. Custody checks balance, asset, recipient, action/day limits, nonce, revision, instance and expiry. The server evaluates semantic rules before signing.
 
 Funding preserves spending counters. Limits use UTC days and six-decimal units: `1_000_000` units = one token. The `daily_limit` ceiling is `50_000_000`. Zero pauses spending. Changing policy clears approval.
