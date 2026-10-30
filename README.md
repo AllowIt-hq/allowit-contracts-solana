@@ -14,7 +14,7 @@
 
 </div>
 
-**Go on. On your terms.** Allowit lets your AI agents spend and invest, within a policy you set. This repository is the Solana half of that promise: the on-chain programs that hold the money and refuse anything outside the policy, even when every off-chain service has been compromised.
+**Go on. On your terms.** Allowit lets your AI agents spend and invest, within a policy you set. This repository is the Solana half of that promise: the on-chain programs that hold the money and refuse anything past the owner's limits, even when every off-chain service has been compromised.
 
 ## What is this?
 
@@ -23,7 +23,7 @@ Three native Rust programs, one shared policy source, and the host crates that t
 | Piece | What it does | Where |
 | --- | --- | --- |
 | **Vault** | Holds SPL tokens in a per-vault PDA. Checks approval, limits, nonce, revision, instance and expiry before every transfer. | [`programs/vault`](programs/vault/src/lib.rs) |
-| **Policy helper** | A tiny immutable program the vault calls to confirm the daily-limit rule. No accounts, no custody, no surprises. | [`programs/policy`](programs/policy/src/lib.rs) |
+| **Policy helper** | A tiny immutable program the vault calls to check approval and the daily limit. No accounts, no custody, no surprises. | [`programs/policy`](programs/policy/src/lib.rs) |
 | **PaySH** | A separate, upgradeable profile for paying services in USDC or swapping SOL to USDC, each request signed by an evaluator and bounded by owner budgets. | [`programs/paysh`](programs/paysh/src/lib.rs), [docs](docs/paysh.md) |
 | **Portable policy** | The `require_approval` + `enforce_daily_limit` rule, shared byte-for-byte with the [Stellar contracts](https://github.com/allowit-hq/allowit-contracts-stellar) and hashed into both builds. | [`policy/`](policy/policy.rs) |
 | **ABI crates** | Borsh layouts for the vault ([ABI 2](crates/interface/src/lib.rs)) and the PaySH request protocol ([v2](crates/paysh-interface/src/lib.rs)). | [`crates/interface`](crates/interface), [`crates/paysh-interface`](crates/paysh-interface) |
@@ -85,14 +85,14 @@ cargo build-sbf --manifest-path programs/policy/Cargo.toml --arch v3 --optimize-
 cargo build-sbf --manifest-path programs/vault/Cargo.toml --arch v3 --optimize-size --tools-version v1.57 -- --locked
 cargo build-sbf --manifest-path programs/paysh/Cargo.toml --arch v3 --optimize-size --tools-version v1.57 -- --locked
 
-# 4. Run the compiled programs against real SPL Token transfers (Mollusk)
-SBF_OUT_DIR="$PWD/target/deploy" cargo test --manifest-path sbf-tests/Cargo.toml --locked
+# 4. Run the compiled vault and PaySH programs against real SPL Token transfers (Mollusk)
+SBF_OUT_DIR="$PWD/target/deploy" cargo test --manifest-path sbf-tests/Cargo.toml --locked --test vault --test paysh
 
-# 5. Write a manifest of what you just built (hashes, sizes, git revision)
-python3 scripts/artifacts.py
+# 5. Print a manifest of what you just built (hashes, sizes, git revision)
+python3 scripts/artifacts.py                 # add --output PATH to save it
 ```
 
-The PaySH swap tests also need a Whirlpool program. `bash scripts/build-whirlpool-test.sh` downloads a pinned Orca source archive, checks its SHA-256 and builds it into `target/whirlpool-fixture/` (override with `WHIRLPOOL_FIXTURE_DIR`). Run that before step 4 if you want `sbf-tests/tests/paysh_whirlpool.rs` to pass.
+The PaySH swap tests also need a Whirlpool program. `bash scripts/build-whirlpool-test.sh` downloads a pinned Orca source archive, checks its SHA-256 and builds it into `target/whirlpool-fixture/`. Then add `--test paysh_whirlpool` to step 4, or drop the `--test` flags to run every suite. If you move the fixture with `WHIRLPOOL_FIXTURE_DIR`, point the tests at the built program with `WHIRLPOOL_SBF_PATH=<dir>/target/deploy/whirlpool.so`.
 
 > [!TIP]
 > Each PaySH host service package is its own Cargo workspace. Test one with `cargo test --manifest-path crates/<package>/Cargo.toml --locked`. See [Host service packages](docs/services.md).
