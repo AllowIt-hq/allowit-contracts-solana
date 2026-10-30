@@ -1,37 +1,98 @@
-# Bounded PaySH execution profile
+# PaySH: the bounded execution profile
 
-`allowit-paysh` is a separate upgradeable Solana program. It does not change the immutable version-1 policy verifier or existing vault ABI. The upgrade authority can replace this program and therefore controls the security of its custody accounts. Retain it only under the explicitly selected owner governance; production deployments must record the upgrade authority.
+PaySH is how an Allowit agent pays for a service. The owner sets up a policy with hard budgets and an allowlist of services. An evaluator signs each request. The [`allowit-paysh` program](../programs/paysh/src/lib.rs) then re-checks everything the owner configured before it moves a single lamport.
 
-Evaluator-authorized spending uses `Execute(Request)`, exposed as `execute(request)` by the SDK. Initialization requires the owner signature and binds an immutable config per policy instance. Pause and withdrawal require the owner signature. Public submitters may execute accepted evaluator signatures unless `owner_only` is true. Funding is a normal System Program transfer into the system-owned SOL custody PDA, plus classic SPL Token funding of its owner-controlled token accounts.
+It is a separate, upgradeable program. It changes nothing about the immutable policy helper or the native vault ABI. Because its upgrade authority can replace the program, that authority controls the safety of every PaySH custody account; keep it under explicitly chosen owner governance and record it for every production deployment.
 
-`crates/paysh-interface` is the canonical Borsh protocol. The client must contain an identical copy before release; see the protocol version note below; releases must check the schema equality. The Ed25519 message is `allowit-paysh-request-v2` followed by SHA-256 of the Borsh Request. Include the standard self-contained single-signature Ed25519 precompile immediately before Execute. Public-key offset is 16, signature offset 48, message offset 112; all instruction references are `u16::MAX`. The program checks the actual instructions sysvar, prior program ID, exact layout, evaluator key and complete message. Execute cannot be called through an unrelated CPI wrapper.
+## What the owner controls
 
-Version 2 requires a fresh program deployment and uses separate request domains and PDA seeds. The owner commits `service_allowlist_root` at initialization. Every request appends a service hash and up to three sibling hashes proving membership in a list of at most eight services. Membership is scoped to the configured genesis hash, mint and vendor. Empty roots deny all services. The program verifies membership before any fee, receipt, budget or token effect. Existing version-1 deployments and their pending-operation journals remain separate for recovery.
+- **Initialize** needs the owner's signature and binds an immutable `Config` to the policy instance: evaluator key, treasury, USDC mint, vendor account, pool, every budget and the `service_allowlist_root`.
+- **Pause** and **Withdraw** need the owner's signature and ignore the evaluator entirely.
+- **Execute** can be submitted by anyone carrying a valid evaluator signature, unless `owner_only` is set, in which case only the owner may submit.
+- **Funding** is ordinary: a System Program transfer into the SOL custody PDA, plus classic SPL Token transfers into the policy's token accounts.
 
-Requests bind genesis hash, program, policy, owner, module digest, operation ID, random replay nonce, gateway challenge commitment, semantic evidence commitment, signing slot/time, expiry slot/time, exact service fee and exact action. A digest authenticates no evidence by itself; the accepted backend signature attests the offchain checks. Native budgets, caller rule, expiry, pause and exact effects are enforced independently. Genesis hash is immutable owner configuration because Solana exposes no native genesis-hash sysvar; clients must verify it through the selected RPC before initializing or signing.
+## The request protocol
 
-A successful call first transfers the configured SOL service fee from policy SOL custody to the configured treasury, then transfers exact USDC to the single approved vendor or swaps exact SOL input into policy-owned USDC. Receipt and budget PDA creation is paid by the transaction submitter and does not debit policy custody. All effects roll back if the transaction fails. The submitter still pays network fees for a failed transaction. Service fees and swap input debit both a gross period SOL budget and lifetime allocation. USDC, swap input and service fees also have separate period caps. Budget periods use the signed original timestamp, with at most 60 seconds and 180 slots of freshness. Late execution charges its original bucket. No capacity reservation exists.
+[`crates/paysh-interface`](../crates/paysh-interface/src/lib.rs) is the canonical Borsh protocol, version 2. A client must carry an identical copy, and a release must check schema equality before it ships.
 
-Receipts are never closed by this profile. `(policy, nonce)` is permanently consumed on success. Failed execution leaves it reusable, and its evaluator signature remains public and executable until expiry. For one logical operation the host must persist one replay nonce before signing and reuse that nonce for every replacement quote or request; never assign a fresh nonce merely because a transaction failed. Old and replacement requests then compete for the same permanent receipt. A distinct nonce authorizes a distinct debit, even with the same operation ID. Unknown settlement must be recovered before the backend issues a replacement. Receipt stores SHA-256 of the signed message, operation ID and original signing timestamp; gateway verification must match the exact successful Execute invocation and its inner payment CPI, and consume payment once.
+The evaluator signs `allowit-paysh-request-v2` followed by the SHA-256 of the Borsh-encoded `Request`. The transaction places a standard, self-contained, single-signature Ed25519 precompile instruction immediately before `Execute`, with the public key at offset 16, the signature at offset 48, the message at offset 112 and every instruction index set to `u16::MAX`. The program reads the real instructions sysvar, checks the previous program ID, the exact layout, the evaluator key and the whole message. `Execute` cannot be reached through an unrelated CPI wrapper.
 
-Owner-only `Withdraw` recovers all remaining SOL custody, unwraps WSOL to the owner, and transfers accessible USDC to the owner's canonical associated token account. USDC custody closes and returns its rent when emptied; WSOL custody closes independently. A frozen USDC vault or a missing/frozen canonical destination preserves USDC custody for a later owner recovery while still returning SOL and WSOL. Existing destination accounts must have the exact mint and owner. Withdrawal works while paused or expired and permanently marks the policy as a paused version-2 tombstone; it cannot be resumed or reinitialized. Policy, receipts and budget accounts remain to preserve replay protection and history. After thawing USDC or creating its canonical destination, the owner may withdraw again. Subsequent donations to closed custody accounts can still be recovered by the owner.
+A request binds: genesis hash, program, policy, owner, module digest, operation ID, a random replay nonce, the gateway challenge commitment, the semantic-evidence commitment, signing slot and time, expiry slot and time, the exact service fee and the exact action. The digests authenticate no evidence by themselves; the evaluator's signature attests that the off-chain checks ran. Budgets, the caller rule, expiry, pause and the exact effects are enforced on-chain regardless.
 
-The direct swap adapter admits classic SPL Token static-fee Orca Whirlpools only, pinned to its exact owner-configured program, pool, vaults, oracle, WSOL mint A and USDC mint B. It validates the pool discriminator, canonical PDA, token ownership, configured LP/protocol fee cap and fixed TickArray accounts. The three arrays must belong to that pool, have canonical PDAs and cover the current array plus two contiguous decreasing arrays. The request binds their keys and an A-to-B sqrt price limit. Native input/allocation limits, a configured minimum USDC per SOL and exact minimum output enforce hard loss bounds. A successful swap must consume all newly wrapped SOL and preserve the WSOL balance that existed before Execute, including earlier SOL donations recognized by SyncNative. A partial fill at the price limit fails with `Slippage` even when minimum output is met; the transaction rolls back its service fee, wrapping, swap, receipt and budget changes. The backend must obtain a fresh quote before authorizing a replacement after such a failure, preserving the original logical operation and nonce. The backend obtains current quotes and performs semantic checks before signing. Pool trading fees still apply; the adapter adds no host, aggregator or referral account or fee. Adaptive fees, dynamic tick arrays, Token-2022, B-to-A swaps and intermediary aggregators require a different profile.
+Solana exposes no genesis-hash sysvar, so the genesis hash is part of the immutable owner configuration. Clients verify it through their RPC before initializing or signing.
 
-## Accounts
+### Service allowlist
+
+At initialization the owner commits a `service_allowlist_root`. Each request carries a service hash and up to three sibling hashes that prove membership in a list of at most eight services, scoped to the configured genesis hash, mint and vendor. An all-zero root denies every service. Membership is verified before any fee, receipt, budget or token effect. See [`allowlist.rs`](../crates/paysh-interface/src/allowlist.rs).
+
+## What a successful call does
+
+1. Transfers the configured SOL service fee from the policy's SOL custody to the treasury.
+2. Either pays exact USDC to the single approved vendor, or swaps exact SOL input into policy-owned USDC.
+3. Writes a receipt and updates the period budget.
+
+Receipt and budget account rent is paid by the transaction submitter, never from policy custody. If anything fails, every effect rolls back; the submitter still pays the network fee.
+
+### Budgets
+
+Service fees and swap input count against a gross period SOL budget and a lifetime allocation. USDC, swap input and service fees each have their own period cap on top. The period is derived from the signed original timestamp, which may be at most 60 seconds and 180 slots old. A request executed late is charged to its original bucket. Nothing is reserved ahead of time.
+
+### Replay protection and nonces
+
+Receipts are never closed. On success, `(policy, nonce)` is consumed forever. On failure it stays reusable, and the evaluator's signature remains public and executable until it expires.
+
+For one logical operation the host persists one nonce before signing and reuses it for every replacement quote or request. A fresh nonce authorizes a fresh debit, even with the same operation ID. Never mint a new nonce just because a transaction failed; let the old and new requests compete for the same permanent receipt, and recover any unknown settlement before issuing a replacement. The receipt stores the SHA-256 of the signed message, the operation ID and the original signing timestamp. Gateway verification matches the exact successful `Execute` and its inner payment CPI, and consumes the payment once.
+
+## The swap adapter
+
+The direct swap path admits classic SPL Token, static-fee Orca Whirlpools only, pinned to the owner-configured program, pool, vaults, oracle, WSOL mint A and USDC mint B. It validates the pool discriminator, canonical PDA, token ownership and the configured LP/protocol fee cap, and requires three fixed `TickArray` accounts that belong to the pool, have canonical PDAs, and cover the current array plus two contiguous decreasing arrays. The request binds those keys and an A-to-B sqrt price limit.
+
+Hard loss bounds come from the native input and allocation limits, a configured minimum USDC per SOL and the exact minimum output. A successful swap must consume all newly wrapped SOL and leave the WSOL balance that existed before `Execute` untouched, including earlier donations recognized by `SyncNative`. A partial fill at the price limit fails with `Slippage` even when minimum output is met, and the whole transaction rolls back. After such a failure the backend fetches a fresh quote and keeps the original operation and nonce. Pool trading fees apply; the adapter adds no host, aggregator or referral fee.
+
+Adaptive fees, dynamic tick arrays, Token-2022, B-to-A swaps and intermediary aggregators need a different profile.
+
+## Owner recovery
+
+`Withdraw` is owner-only. It returns all remaining SOL custody, unwraps WSOL to the owner and transfers accessible USDC to the owner's canonical associated token account. USDC custody closes and refunds its rent when empty; WSOL custody closes independently. If the USDC vault is frozen, or the canonical destination is missing or frozen, USDC custody is preserved for a later withdrawal while SOL and WSOL still return. Existing destination accounts must have the exact mint and owner.
+
+Withdrawal works while paused or expired. It permanently marks the policy as a paused version-2 tombstone that cannot be resumed or reinitialized. Policy, receipt and budget accounts remain so replay protection and history survive. The owner may withdraw again after thawing USDC or creating the canonical destination, and later donations to closed custody accounts are still recoverable.
+
+## Accounts and seeds
 
 | Instruction | Ordered accounts |
 | --- | --- |
 | Initialize | policy(w), owner(w,s), vault USDC, vault WSOL, USDC mint, vendor USDC, treasury, System Program, SOL custody(w), pool program, pool state, pool WSOL vault, pool USDC vault, oracle |
 | Execute PayUsdc | policy(w), payer(w,s), receipt(w), budget(w), treasury(w), vault USDC(w), vault WSOL(w), vendor USDC(w), USDC mint, SPL Token, System Program, Instructions sysvar, SOL custody(w) |
-| Execute SwapSolToUsdc | payment account prefix, pool program, pool state(w), pool WSOL vault(w), pool USDC vault(w), oracle, tick array 0(w), tick array 1(w), tick array 2(w) |
+| Execute SwapSolToUsdc | the PayUsdc prefix, then pool program, pool state(w), pool WSOL vault(w), pool USDC vault(w), oracle, tick array 0(w), tick array 1(w), tick array 2(w) |
 | Pause | policy(w), owner(s) |
 | Withdraw (tag 3) | policy(w), owner(w,s), SOL custody(w), vault USDC(w), vault WSOL(w), owner canonical USDC ATA(w), SPL Token, System Program |
 
-SOL custody seeds: `[b"paysh-sol-v2", policy]`; it is a zero-data System Program account that the policy program signs for using PDA seeds. This separate custody account permits native System Program transfers before token CPIs. Policy seeds: `[b"paysh-policy-v2", owner, instance_id]`. Receipt seeds: `[b"paysh-receipt-v2", policy, nonce]`. Budget seeds: `[b"paysh-budget-v2", policy, u64LE(signing_timestamp / period_seconds)]`. Policy occupies 1024 bytes, receipt 73 bytes, budget 40 bytes. Decode struct prefixes where padding exists.
+| Account | Seeds | Size |
+| --- | --- | --- |
+| Policy | `[b"paysh-policy-v2", owner, instance_id]` | 1024 bytes |
+| SOL custody | `[b"paysh-sol-v2", policy]` | zero-data System account |
+| Receipt | `[b"paysh-receipt-v2", policy, nonce]` | 73 bytes |
+| Budget | `[b"paysh-budget-v2", policy, u64LE(signing_timestamp / period_seconds)]` | 40 bytes |
 
-Build with `cargo build-sbf --manifest-path programs/paysh/Cargo.toml --arch v3 --optimize-size --tools-version v1.57 -- --locked`. Run the compiled SBF suite with `SBF_OUT_DIR="$PWD/target/deploy" cargo test --manifest-path sbf-tests/Cargo.toml --test paysh --locked`. Deployment requires a funded fee payer, separate recorded upgrade authority, classic SPL token accounts and a verified pool available on the selected cluster. Public Testnet USDC fixtures are test assets, not mainnet USDC.
+SOL custody is a System Program account that the policy program signs for with PDA seeds, which lets it make native transfers before token CPIs. Where accounts carry padding, decode the struct prefix.
 
-SOL custody must hold the rent-exempt reserve in addition to its intended debit allocation. Each transfer must leave it at zero or rent-exempt; a residual nonzero balance below the live minimum causes the transaction to fail atomically. The configured treasury must already be rent-exempt before small service fees are sent. Query the selected cluster for current rent minima; network fees and receipt/budget rent are separate payer liabilities.
+## Build and test
 
-This program implements the PaySH v2 request protocol with service-allowlist fields and separate PDA seeds. A client requires this exact matching interface and owner-approved configuration; v1 deployment receipts cannot validate that protocol. Preserve the existing v1 client and deployment for recovery of its pending operations. Release tooling hashes every built `allowit_*.so`, including `allowit_paysh.so`. Before deployment, compare the exact client and contract interface source and domain/seed constants; an incompatible schema is a release blocker.
+```sh
+cargo build-sbf --manifest-path programs/paysh/Cargo.toml --arch v3 --optimize-size --tools-version v1.57 -- --locked
+SBF_OUT_DIR="$PWD/target/deploy" cargo test --manifest-path sbf-tests/Cargo.toml --test paysh --locked
+```
+
+The Whirlpool tests need the pinned Orca fixture from `bash scripts/build-whirlpool-test.sh`, then `--test paysh_whirlpool`.
+
+## Deployment
+
+A PaySH deployment needs a funded fee payer, a separately recorded upgrade authority, classic SPL token accounts and a verified Whirlpool pool on the selected cluster. Public Testnet USDC fixtures are test assets, not mainnet USDC.
+
+Rent matters:
+
+- SOL custody must hold the rent-exempt reserve on top of its intended allocation. Every transfer must leave it at zero or rent-exempt; a leftover below the live minimum fails the transaction atomically.
+- The treasury must already be rent-exempt before small service fees arrive.
+- Query the cluster for current rent minima. Network fees and receipt/budget rent are the submitter's liabilities.
+
+Version 2 uses its own request domain and PDA seeds, so it is always a fresh program deployment. Version-1 deployments and their pending-operation journals stay separate; keep the v1 client and deployment available to recover its pending operations. Release tooling hashes every built `allowit_*.so`, including `allowit_paysh.so`. Before deploying, compare the client's and the program's interface source, domain and seed constants; a mismatch is a release blocker.
