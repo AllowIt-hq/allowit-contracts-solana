@@ -1,6 +1,6 @@
 # Solana vendor
 
-`allowit-solana-vendor` provides Solana host adapters to the AllowIt SDK client facade.
+`allowit-solana-vendor` provides Solana host adapters to the Allowit SDK client facade.
 It depends on `allowit-client-core` for errors, origin validation and safe output.
 It does not depend on the SDK client facade or CLI.
 

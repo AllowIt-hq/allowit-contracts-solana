@@ -114,7 +114,7 @@ fn token() -> Result<String> {
     let t = env_value(TOKEN_ENV);
     if t.is_empty() {
         return Err(Error::config(format!(
-            "set {TOKEN_ENV} to the policy's PaySH capability from the AllowIt app"
+            "set {TOKEN_ENV} to the policy's PaySH capability from the Allowit app"
         )));
     }
     // Issued capabilities are base64url or JWT text. Anything else could survive
@@ -162,7 +162,7 @@ impl Http {
         }
         let client = builder
             .build()
-            .map_err(|_| Error::config("could not configure the AllowIt HTTP client"))?;
+            .map_err(|_| Error::config("could not configure the Allowit HTTP client"))?;
         Ok(Self { origin, client })
     }
     /// One attempt. Transport and read failures are returned as unknown.
@@ -188,7 +188,7 @@ impl Http {
             {
                 Error::config("TLS certificate for ALLOWIT_URL is not trusted")
             } else {
-                Error::uncertain(format!("network error talking to AllowIt: {e}"))
+                Error::uncertain(format!("network error talking to Allowit: {e}"))
             }
         })?;
         let status = response.status().as_u16();
@@ -200,10 +200,10 @@ impl Http {
             .take(MAX_REPLY as u64 + 1)
             .read_to_end(&mut data)
             .map_err(|e| {
-                Error::uncertain(format!("network error reading the AllowIt response: {e}"))
+                Error::uncertain(format!("network error reading the Allowit response: {e}"))
             })?;
         if data.len() > MAX_REPLY {
-            return Err(Error::uncertain("AllowIt response exceeded the 1 MB limit"));
+            return Err(Error::uncertain("Allowit response exceeded the 1 MB limit"));
         }
         let value: Option<Value> = serde_json::from_slice(&data).ok();
         if status != 200 {
@@ -218,7 +218,7 @@ impl Http {
         match value {
             Some(v) if v.is_object() => Ok(Reply::Ok(v)),
             _ => Err(Error::uncertain(
-                "AllowIt returned a response that is not a JSON object",
+                "Allowit returned a response that is not a JSON object",
             )),
         }
     }
@@ -230,7 +230,7 @@ fn services(json: bool, stdout: &mut String) -> Result<i32> {
         Reply::Ok(v) => v,
         Reply::Redirect(s) => {
             return Err(Error::config(format!(
-                "AllowIt answered with a redirect (HTTP {s}); check ALLOWIT_URL"
+                "Allowit answered with a redirect (HTTP {s}); check ALLOWIT_URL"
             )));
         }
         Reply::Status(s, m) => return Err(Error::api(s, m)),
@@ -367,7 +367,7 @@ fn call(pos: &[String], json: bool, stdout: &mut String, stderr: &mut String) ->
         Reply::Ok(v) => v,
         Reply::Redirect(s) => {
             return Err(unknown(
-                format!("AllowIt answered with a redirect (HTTP {s}), which was not followed"),
+                format!("Allowit answered with a redirect (HTTP {s}), which was not followed"),
                 policy,
                 op,
             ));
@@ -375,7 +375,7 @@ fn call(pos: &[String], json: bool, stdout: &mut String, stderr: &mut String) ->
         // No untyped reply, auth and rate-limit refusals included, proves nothing was paid.
         Reply::Status(s, m) => {
             return Err(unknown(
-                format!("AllowIt returned HTTP {s}: {m}"),
+                format!("Allowit returned HTTP {s}: {m}"),
                 policy,
                 op,
             ));
@@ -394,20 +394,20 @@ fn status(pos: &[String], json: bool, stdout: &mut String) -> Result<i32> {
         Ok(Reply::Ok(v)) => v,
         Ok(Reply::Status(404, m)) => {
             return Err(Error::uncertain(format!(
-                "AllowIt returned HTTP 404: {m}\nNo operation {op} is recorded for this policy. If a call with this OPERATION_ID may have been sent, rerun that identical call; never use a new OPERATION_ID for it"
+                "Allowit returned HTTP 404: {m}\nNo operation {op} is recorded for this policy. If a call with this OPERATION_ID may have been sent, rerun that identical call; never use a new OPERATION_ID for it"
             )));
         }
         Ok(Reply::Status(s @ (400 | 401 | 403 | 429), m)) => return Err(Error::api(s, m)),
         Ok(Reply::Status(s, m)) => {
             return Err(unknown(
-                format!("AllowIt returned HTTP {s}: {m}"),
+                format!("Allowit returned HTTP {s}: {m}"),
                 policy,
                 op,
             ));
         }
         Ok(Reply::Redirect(s)) => {
             return Err(Error::config(format!(
-                "AllowIt answered with a redirect (HTTP {s}); check ALLOWIT_URL"
+                "Allowit answered with a redirect (HTTP {s}); check ALLOWIT_URL"
             )));
         }
         Err(e) if e.config => return Err(e),
@@ -421,7 +421,7 @@ fn status(pos: &[String], json: bool, stdout: &mut String) -> Result<i32> {
 fn report(mut v: Value, policy: &str, op: &str, json: bool, stdout: &mut String) -> Result<i32> {
     if v["operationId"].as_str() != Some(op) {
         return Err(unknown(
-            "AllowIt returned the result of a different operation",
+            "Allowit returned the result of a different operation",
             policy,
             op,
         ));
@@ -438,7 +438,7 @@ fn report(mut v: Value, policy: &str, op: &str, json: bool, stdout: &mut String)
     } else {
         return Err(unknown(
             format!(
-                "AllowIt returned an unknown operation status {}",
+                "Allowit returned an unknown operation status {}",
                 quoted(&phase)
             ),
             policy,
@@ -496,7 +496,7 @@ fn report(mut v: Value, policy: &str, op: &str, json: bool, stdout: &mut String)
         }
     };
     let delivery = match phase.as_str() {
-        "awaiting_input" => "waiting for the owner's answer in AllowIt Requests",
+        "awaiting_input" => "waiting for the owner's answer in Allowit Requests",
         "owner_approved" => "not complete; the owner's signed Yes is recorded for this request",
         "delivered" if paid => "delivered",
         "delivered" => "response received; payment remains unresolved",
@@ -533,7 +533,7 @@ fn report(mut v: Value, policy: &str, op: &str, json: bool, stdout: &mut String)
             "The API response was received. No finalized payment receipt was provided.".to_string()
         }
         12 if phase == "awaiting_input" => format!(
-            "Ask the owner to answer this request in AllowIt Requests, then check: allowit paysh status {policy} {op}. Keep the same OPERATION_ID; never create a replacement operation."
+            "Ask the owner to answer this request in Allowit Requests, then check: allowit paysh status {policy} {op}. Keep the same OPERATION_ID; never create a replacement operation."
         ),
         12 if phase == "owner_approved" => format!(
             "The signed Yes remains bounded to this original request. Continue with: allowit paysh status {policy} {op}, or explicitly rerun the identical call with the same OPERATION_ID and original input. No payment is established by the answer."

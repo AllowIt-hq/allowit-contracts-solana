@@ -1,6 +1,6 @@
 # Wallet signing and contract custody
 
-AllowIt separates policy evaluation, signing and custody. The [execution profiles](https://github.com/AllowIt-hq/allowit.xyz-project/blob/main/wiki/allowit/execution-assurance.md) define their assurance boundaries. [Stellar custody architecture](https://github.com/AllowIt-hq/allowit-contracts-stellar/blob/main/docs/architecture.md) applies the same owner-control principle introduced in [Stellar PR 6](https://github.com/AllowIt-hq/allowit-contracts-stellar/pull/6).
+Allowit separates policy evaluation, signing and custody. The [execution profiles](https://github.com/allowit-hq/allowit.xyz-project/blob/main/wiki/allowit/execution-assurance.md) define their assurance boundaries. [Stellar custody architecture](https://github.com/allowit-hq/allowit-contracts-stellar/blob/main/docs/architecture.md) applies the same owner-control principle introduced in [Stellar PR 6](https://github.com/allowit-hq/allowit-contracts-stellar/pull/6).
 
 ## Signing and custody routes
 

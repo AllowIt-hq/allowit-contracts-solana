@@ -1,4 +1,4 @@
-//! Solana host adapters for the AllowIt SDK client facade.
+//! Solana host adapters for the Allowit SDK client facade.
 //!
 //! This crate does not run on chain. Contract programs and their interfaces
 //! remain separate workspace members.

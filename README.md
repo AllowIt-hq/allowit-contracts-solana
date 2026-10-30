@@ -1,4 +1,4 @@
-# AllowIt native Solana contracts
+# Allowit native Solana contracts
 
 Shared Solana custody and Rust policy programs enforce owner-approved spending through per-vault PDA state and classic SPL Token accounts. The separate [PaySH program](docs/paysh.md) supports bounded payments and swaps.
 

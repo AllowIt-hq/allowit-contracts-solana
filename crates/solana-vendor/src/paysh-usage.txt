@@ -1,4 +1,4 @@
-allowit paysh reconciles retained operations from a legacy AllowIt policy.
+allowit paysh reconciles retained operations from a legacy Allowit policy.
 
 Use the original retained scoped capability and backend for that policy.
 These commands do not create a policy, issue authority or start a new operation.
@@ -25,7 +25,7 @@ an unknown result may still have paid. Check it with status, or
 rerun the identical call with the same OPERATION_ID. INPUT_JSON is limited to
 4096 bytes. Each request is sent once; nothing is retried automatically.
 
-awaiting_input means wait for, or ask, the owner to answer in AllowIt Requests.
+awaiting_input means wait for, or ask, the owner to answer in Allowit Requests.
 Do not generate a replacement operation. owner_approved records a signed Yes
 for the bounded original request; it is not payment or API delivery. Continue
 explicitly with status, or rerun the identical call with the same OPERATION_ID
