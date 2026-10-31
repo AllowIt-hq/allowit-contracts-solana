@@ -194,8 +194,10 @@ The [`Solana runtime smoke`](.github/workflows/integration-runtime.yml) workflow
 ├── programs/
 │   ├── policy/             Immutable helper (pinocchio, no_std, no accounts)
 │   ├── vault/              Custody program: PDA state + SPL Token CPI
-│   └── paysh/              Upgradeable PaySH execution profile
+│   ├── paysh/              Upgradeable PaySH execution profile
+│   └── mandate/            Mandate allowance program (allowit-solana) and its Mollusk tests
 ├── crates/
+│   ├── native/             Native Solana Rust SDK (allowit-native)
 │   ├── interface/          Vault ABI 2 (Borsh)
 │   ├── paysh-interface/    PaySH v2 request protocol and service allowlist
 │   ├── solana-vendor/      SDK host adapters and PaySH reconciliation
@@ -206,10 +208,17 @@ The [`Solana runtime smoke`](.github/workflows/integration-runtime.yml) workflow
 │   ├── paysh-cooperating/  Cooperating-gateway HTTP protocol
 │   ├── delegated-x402/     Solana x402 packet builder and checker
 │   └── service-rpc/        Typed Solana RPC request builders
+├── native/                 @allowit/native: JavaScript native vault lifecycle
 ├── sbf-tests/              Mollusk tests against the compiled programs
+├── verification/           Native correspondence and refinement checks (hash-locked)
 ├── scripts/                check-policy.py, artifacts.py, policy-smoke.rs, Whirlpool fixture
-└── docs/                   Architecture, PaySH profile, host service packages
+└── docs/                   Architecture, PaySH profile, host service packages, native vault v2
 ```
+
+- [`programs/mandate/`](programs/mandate/README.md) is the owner-approved mandate allowance program. It evaluates compiled policy IR with SDK core and spends through SPL Token `transfer_checked`. It keeps its own Cargo lockfile.
+- [`crates/native/`](crates/native/) is the Rust native SDK for the vault v2 lifecycle. [`native/`](native/README.md) is its JavaScript counterpart.
+- [`verification/`](verification/README.md) holds the native-source correspondence checks. Its inputs are hash-bound: run `python3 -m unittest discover -s verification/tests`.
+- [`docs/native-vault-v2.md`](docs/native-vault-v2.md) describes the native vault v2 protocol.
 
 ## Part of Allowit
 
@@ -220,7 +229,7 @@ The [`Solana runtime smoke`](.github/workflows/integration-runtime.yml) workflow
 
 ## Contributing
 
-Pull requests run the portable policy checks ([`contracts.yml`](.github/workflows/contracts.yml)) and, when touched, the service package matrix ([`service-packages.yml`](.github/workflows/service-packages.yml)). The compiled-program suites run nightly and on demand. Before you open a PR:
+Pull requests run the portable policy checks ([`contracts.yml`](.github/workflows/contracts.yml)) and, when touched, the service package matrix ([`service-packages.yml`](.github/workflows/service-packages.yml)), the native SDKs ([`native.yml`](.github/workflows/native.yml)), the mandate program ([`mandate.yml`](.github/workflows/mandate.yml)) and verification ([`verification.yml`](.github/workflows/verification.yml)). The compiled-program suites run nightly and on demand. Before you open a PR:
 
 ```sh
 python3 scripts/check-policy.py
@@ -233,4 +242,4 @@ If you edit `policy/policy.rs` or `policy/policy_api.rs`, regenerate `source_has
 
 ## License
 
-Licensing is per crate. `allowit-paysh-interface` and `allowit-solana-vendor` are MIT (see [`crates/solana-vendor/LICENSE`](crates/solana-vendor/LICENSE)). The programs and the vault interface are `UNLICENSED`; the host service packages extracted from the Allowit engine are `LicenseRef-Proprietary`. Each `Cargo.toml` states its own terms.
+Licensing is per crate. `allowit-paysh-interface`, `allowit-solana-vendor`, `allowit-native`, `@allowit/native` and the mandate program `allowit-solana` are MIT (see [`crates/solana-vendor/LICENSE`](crates/solana-vendor/LICENSE)). The other programs and the vault interface are `UNLICENSED`; the host service packages extracted from the Allowit engine are `LicenseRef-Proprietary`. Each `Cargo.toml` states its own terms.
