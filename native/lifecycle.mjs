@@ -83,12 +83,15 @@ export class PolicyLifecycle{
    // All commands serialize locally; any unresolved spend blocks another spend.
    if(method==='execute'){
     const slot=await this.journal.read('execute-slot');
-    if(slot){const old=await this.journal.read('request-'+slot.id);if(!old)throw Error('Execution journal inconsistency');const reconciled=await this.reconcile(old,policy,owner);await this.journal.write('request-'+slot.id,reconciled);if(!['settled','failed'].includes(reconciled.status))throw Error(`Execution ${slot.id} is uncertain; recover it before a new spend`);await this.journal.clear('execute-slot');}
+    if(slot){const old=await this.journal.read('request-'+slot.id);if(!old)await this.journal.clear('execute-slot');else{const reconciled=await this.reconcile(old,policy,owner);await this.journal.write('request-'+slot.id,reconciled);if(!['settled','failed'].includes(reconciled.status))throw Error(`Execution ${slot.id} is uncertain; recover it before a new spend`);await this.journal.clear('execute-slot');}}
    }
    // Per-method owner slots prevent accidental additional deposits/withdrawals.
+   let superseded;
    if(['fund','withdraw'].includes(method)){
-    const slot=await this.journal.read('owner-slot-'+method);
-    if(slot){const old=await this.journal.read('request-'+slot.id);if(!old)throw Error('Owner journal inconsistency');const reconciled=await this.reconcile(old,policy,owner);await this.journal.write('request-'+slot.id,reconciled);if(!['settled','failed'].includes(reconciled.status)&&!(reconciled.blockhashExpired===true&&options.additionalOwnerOperation===true))throw Error('Earlier '+method+' is uncertain; recover it first. After verified expiry, explicitly authorize an additional owner operation while retaining the old proof.');}
+    let slot=await this.journal.read('owner-slot-'+method),old=slot&&await this.journal.read('request-'+slot.id);
+    // A slot without its record falls back to the guard that it superseded.
+    if(slot&&!old&&slot.previous){old=await this.journal.read('request-'+slot.previous);if(old)slot={id:slot.previous};}
+    if(slot){if(!old)await this.journal.clear('owner-slot-'+method);else{const reconciled=await this.reconcile(old,policy,owner);await this.journal.write('request-'+slot.id,reconciled);if(!['settled','failed'].includes(reconciled.status)&&!(reconciled.blockhashExpired===true&&options.additionalOwnerOperation===true))throw Error('Earlier '+method+' is uncertain; recover it first. After verified expiry, explicitly authorize an additional owner operation while retaining the old proof.');if(!['settled','failed'].includes(reconciled.status))superseded=slot.id;}}
    }
    const prepared=await this.sdk.prepare(policy,owner,method,options),unsignedMessage=Buffer.from(prepared.transaction.serializeMessage());
    const signed=await this.sign(prepared.transaction,method==='execute'?'executor':'owner');
@@ -96,8 +99,11 @@ export class PolicyLifecycle{
    const raw=signed.serialize(),signature=base58(signed.signature);
    const record={id,intent:canonical,method,status:'uncertain',signature,signedBytes:raw.toString('base64'),blockhash:prepared.blockhash,lastValidBlockHeight:prepared.lastValidBlockHeight,nonce:prepared.nonce,revision:prepared.revision,transactionUrl:this.sdk.transactionURL(signature)};
    validateRecord(this.sdk,policy,owner,record);
-   // Exact signed proof and unresolved slot are durable before any broadcast.
-   await this.journal.write(name,record);if(['fund','withdraw'].includes(method))await this.journal.write('owner-slot-'+method,{id});if(method==='execute')await this.journal.write('execute-slot',{id});await this.journal.write('last',{id});
+   // The guard slot is durable before the signed proof, and both before any broadcast.
+   // A crash between them leaves a slot without a record: nothing was signed durably or
+   // broadcast, so the next operation clears it or restores the guard that it superseded.
+   // A record never exists without its slot.
+   if(['fund','withdraw'].includes(method))await this.journal.write('owner-slot-'+method,superseded?{id,previous:superseded}:{id});if(method==='execute')await this.journal.write('execute-slot',{id});await this.journal.write(name,record);await this.journal.write('last',{id});
    try{const returned=await this.sdk.connection.sendRawTransaction(raw,{skipPreflight:false,maxRetries:0});if(returned!==signature)throw Error('RPC returned a different signature');record.status='submitted';await this.journal.write(name,record);}catch{/* Missing evidence never authorizes a replacement. */}
    return record;
   });
