@@ -64,7 +64,7 @@ The frame checker pins its README as an exact-byte test input. Its historical re
 
 ## Run
 
-Paths in the locks and checkers are relative to the repository root. The locks name sibling checkouts such as `../AllowIt-contracts-solana` and `../AllowIt-contracts-stellar`, with capital `I`; a full run needs those checkouts under those names. The native lock binds the frozen `policy.rs` (`eceb1d4…`), not the current `policy/policy.rs`, so a full `check_native.py` run against the current sources reports a stale source binding.
+Paths in the locks and checkers are relative to the repository root. `native-source-lock.json` names `../AllowIt-contracts-solana/policy` and `../AllowIt-contracts-stellar/policy`, which are sibling checkouts. `published-source-lock.json` and `runtime/frame/lock.json` name `../../../AllowIt-contracts-solana` and `../../../AllowIt-contracts-stellar`, three levels above the repository root. The names use capital `I`. A full run needs checkouts at those paths, and the locks stay unchanged because they are hash-bound. The native lock binds the frozen `policy.rs` (`eceb1d4…`), not the current `policy/policy.rs`, so a full `check_native.py` run against the current sources reports a stale source binding.
 
 The unit tests need Python 3 and Rust:
 
