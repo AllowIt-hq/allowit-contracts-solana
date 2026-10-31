@@ -46,7 +46,7 @@ The platform check runs before the CLI reads keys, writes state, or contacts RPC
 Node >=22 is required. Install with `npm ci` in this directory. The Go `allowit`
 action CLI dispatches to this SDK (`ALLOWIT_SDK_CLI` absolute path, or a shipped
 `native-sdk/cli.mjs` beside the Go executable). The Rust compiler CLI is separate. To ship the Go binary and SDK together, run
-`node native/scripts/build-bundle.mjs OUTPUT_DIRECTORY` from the SDK repository
+`node native/scripts/build-bundle.mjs OUTPUT_DIRECTORY` from this repository
 with `ALLOWIT_CLI_SOURCE` set to the checked-out Go CLI repository.
 
 ```sh

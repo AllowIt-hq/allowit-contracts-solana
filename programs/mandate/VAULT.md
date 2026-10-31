@@ -16,6 +16,6 @@ Helpers must check actual serialized full tx<=1232. Activation can have 2 or 3 s
 
 ## Verification
 
-Run `cargo test --locked --manifest-path contracts/solana/Cargo.toml`. Build the actual program with the pinned toolchain in `contracts.yml`, then run `SBF_OUT_DIR=... cargo test --locked --manifest-path contracts/sbf-tests/Cargo.toml --test vault`. Those tests execute real System and SPL Token CPIs and verify failed-instruction rollback, funding, exact budget limits, duplicate challenges, signer/account restrictions, revocation and withdrawal.
+Run `cargo test --locked --manifest-path programs/mandate/Cargo.toml`. Build the actual program with the pinned toolchain in `.github/workflows/mandate.yml`, then run `SBF_OUT_DIR=... cargo test --locked --manifest-path programs/mandate/sbf-tests/Cargo.toml --test vault`. Those tests execute real System and SPL Token CPIs and verify failed-instruction rollback, funding, exact budget limits, duplicate challenges, signer/account restrictions, revocation and withdrawal.
 
 Native tests are not public-chain evidence. Deployment and consumer-wallet acceptance must record program ID, artifact hash, network and finalized transaction signatures separately. Retained state/markers and token-account rent are not reclaimed by v1 withdrawal.

@@ -1,5 +1,5 @@
 // Test fixture authoring only. The Rust library never imports or launches JS.
-// Run from the SDK checkout after npm ci --prefix native.
+// Run from this repository after npm ci --prefix native.
 import {writeFile} from 'node:fs/promises';
 import {createRequire} from 'node:module';
 const {Keypair,PublicKey,Transaction}=createRequire(new URL('../../../native/index.mjs',import.meta.url))('@solana/web3.js');
