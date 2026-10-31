@@ -210,14 +210,14 @@ The [`Solana runtime smoke`](.github/workflows/integration-runtime.yml) workflow
 │   └── service-rpc/        Typed Solana RPC request builders
 ├── native/                 @allowit/native: JavaScript native vault lifecycle
 ├── sbf-tests/              Mollusk tests against the compiled programs
-├── verification/           Native correspondence and refinement checks (hash-locked)
+├── verification/           Native policy correspondence check (hash-locked)
 ├── scripts/                check-policy.py, artifacts.py, policy-smoke.rs, Whirlpool fixture
 └── docs/                   Architecture, PaySH profile, host service packages, native vault v2
 ```
 
 - [`programs/mandate/`](programs/mandate/README.md) is the owner-approved mandate allowance program. It evaluates compiled policy IR with SDK core and spends through SPL Token `transfer_checked`. It keeps its own Cargo lockfile.
 - [`crates/native/`](crates/native/) is the Rust native SDK for the vault v2 lifecycle. [`native/`](native/README.md) is its JavaScript counterpart.
-- [`verification/`](verification/README.md) holds the native-source correspondence checks. Its inputs are hash-bound: run `python3 -m unittest discover -s verification/tests`.
+- [`verification/`](verification/README.md) holds the native policy correspondence check. The rest of the verification space stays in allowit-sdk. Its inputs are hash-bound: run `python3 -m unittest discover -s verification/tests`.
 - [`docs/native-vault-v2.md`](docs/native-vault-v2.md) describes the native vault v2 protocol.
 
 ## Part of Allowit
