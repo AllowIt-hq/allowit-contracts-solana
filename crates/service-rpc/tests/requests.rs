@@ -1,4 +1,4 @@
-use allowit_service_core::rpc::Operation;
+use allowit_sdk::service::rpc::Operation;
 use allowit_solana_service_rpc::{Commitment, Encoding, Request};
 use serde_json::json;
 #[test]

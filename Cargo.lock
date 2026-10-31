@@ -15,18 +15,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "allowit-client-core"
-version = "0.1.0"
-source = "git+https://github.com/AllowIt-hq/allowit-sdk.git?rev=d9a22d3c74667d41303f147ee4ba2e442cea3767#d9a22d3c74667d41303f147ee4ba2e442cea3767"
-dependencies = [
- "libc",
- "serde",
- "serde_json",
- "sha2 0.10.9",
- "url",
-]
-
-[[package]]
 name = "allowit-interface"
 version = "0.1.0"
 dependencies = [
@@ -60,10 +48,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "allowit-sdk"
+version = "0.1.0"
+source = "git+https://github.com/allowit-hq/allowit-sdk.git?rev=67f5d696847992e18131f815ce905713ec3646e1#67f5d696847992e18131f815ce905713ec3646e1"
+dependencies = [
+ "libc",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "solana-sha256-hasher",
+ "url",
+]
+
+[[package]]
 name = "allowit-solana-vendor"
 version = "0.1.0"
 dependencies = [
- "allowit-client-core",
+ "allowit-sdk",
  "reqwest",
  "serde_json",
 ]

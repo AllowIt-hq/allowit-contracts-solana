@@ -14,7 +14,7 @@ dependencies = [
 [[package]]
 name = "allowit-native"
 version = "0.1.0"
-source = "git+https://github.com/AllowIt-hq/allowit-sdk.git?rev=ba4d14c0afca5f7fbab363b991c0bf30be02d630#ba4d14c0afca5f7fbab363b991c0bf30be02d630"
+source = "git+https://github.com/allowit-hq/allowit-sdk.git?rev=ba4d14c0afca5f7fbab363b991c0bf30be02d630#ba4d14c0afca5f7fbab363b991c0bf30be02d630"
 dependencies = [
  "allowit-paysh-interface",
  "base64 0.22.1",
@@ -36,19 +36,21 @@ dependencies = [
 [[package]]
 name = "allowit-paysh-interface"
 version = "0.1.0"
-source = "git+https://github.com/AllowIt-hq/allowit-sdk.git?rev=ba4d14c0afca5f7fbab363b991c0bf30be02d630#ba4d14c0afca5f7fbab363b991c0bf30be02d630"
+source = "git+https://github.com/allowit-hq/allowit-sdk.git?rev=ba4d14c0afca5f7fbab363b991c0bf30be02d630#ba4d14c0afca5f7fbab363b991c0bf30be02d630"
 dependencies = [
  "borsh",
  "sha2",
 ]
 
 [[package]]
-name = "allowit-service-core"
+name = "allowit-sdk"
 version = "0.1.0"
-source = "git+https://github.com/AllowIt-hq/allowit-sdk.git?rev=94ac70d6850e68e52935a1e78cbff85cd808e3d7#94ac70d6850e68e52935a1e78cbff85cd808e3d7"
+source = "git+https://github.com/allowit-hq/allowit-sdk.git?rev=67f5d696847992e18131f815ce905713ec3646e1#67f5d696847992e18131f815ce905713ec3646e1"
 dependencies = [
+ "serde",
  "serde_json",
  "sha2",
+ "solana-sha256-hasher",
 ]
 
 [[package]]
@@ -56,7 +58,7 @@ name = "allowit-solana-delegated-x402"
 version = "0.1.0"
 dependencies = [
  "allowit-native",
- "allowit-service-core",
+ "allowit-sdk",
  "base64 0.22.1",
  "bs58",
  "reqwest",
@@ -351,6 +353,21 @@ name = "find-msvc-tools"
 version = "0.1.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1c66915cc5391097de7a2b0b972e8505aa33c0df401fd3a6811dbdb32881ba48"
+
+[[package]]
+name = "five8"
+version = "0.2.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a75b8549488b4715defcb0d8a8a1c1c76a80661b5fa106b4ca0e7fce59d7d875"
+dependencies = [
+ "five8_core",
+]
+
+[[package]]
+name = "five8_core"
+version = "0.1.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2551bf44bc5f776c15044b9b94153a00198be06743e262afaaa61f11ac7523a5"
 
 [[package]]
 name = "foreign-types"
@@ -738,6 +755,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "47d9d19d1d6efa0109d2f65ff4c85cddd50bd572e5a00127ab10987290bcefae"
 
 [[package]]
+name = "lock_api"
+version = "0.4.14"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "224399e74b87b5f3557511d98dff8b14089b3dadafcab6bb93eab67d3aace965"
+dependencies = [
+ "scopeguard",
+]
+
+[[package]]
 name = "log"
 version = "0.4.34"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -861,6 +887,29 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.119",
+]
+
+[[package]]
+name = "parking_lot"
+version = "0.12.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "93857453250e3077bd71ff98b6a65ea6621a19bb0f559a85248955ac12c45a1a"
+dependencies = [
+ "lock_api",
+ "parking_lot_core",
+]
+
+[[package]]
+name = "parking_lot_core"
+version = "0.9.12"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2621685985a2ebf1c516881c026032ac7deafcda1a2c9b7850dc81e3dfcb64c1"
+dependencies = [
+ "cfg-if",
+ "libc",
+ "redox_syscall",
+ "smallvec",
+ "windows-link",
 ]
 
 [[package]]
@@ -1022,6 +1071,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "caa0f4137e1c0a72f4c651489402276c8e8e1cf081f3b0ba156d2cbeef09e86a"
 dependencies = [
  "rand_core 0.10.1",
+]
+
+[[package]]
+name = "redox_syscall"
+version = "0.5.18"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ed2bf2547551a7053d6fdfafda3f938979645c44812fbfcda098faae3f1a362d"
+dependencies = [
+ "bitflags",
 ]
 
 [[package]]
@@ -1195,6 +1253,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "scopeguard"
+version = "1.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "94143f37725109f92c262ed2cf5e59bce7498c01bcc1502d7b9afe439a4e9f49"
+
+[[package]]
 name = "security-framework"
 version = "3.7.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1324,6 +1388,51 @@ checksum = "c3d1e2c7f27f8d4cb10542a02c49005dbd6e93095799d6f3be745fae9f8fedd4"
 dependencies = [
  "libc",
  "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "solana-atomic-u64"
+version = "2.2.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d52e52720efe60465b052b9e7445a01c17550666beec855cce66f44766697bc2"
+dependencies = [
+ "parking_lot",
+]
+
+[[package]]
+name = "solana-define-syscall"
+version = "2.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2ae3e2abcf541c8122eafe9a625d4d194b4023c20adde1e251f94e056bb1aee2"
+
+[[package]]
+name = "solana-hash"
+version = "2.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b5b96e9f0300fa287b545613f007dfe20043d7812bee255f418c1eb649c93b63"
+dependencies = [
+ "five8",
+ "js-sys",
+ "solana-atomic-u64",
+ "solana-sanitize",
+ "wasm-bindgen",
+]
+
+[[package]]
+name = "solana-sanitize"
+version = "2.2.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "61f1bc1357b8188d9c4a3af3fc55276e56987265eb7ad073ae6f8180ee54cecf"
+
+[[package]]
+name = "solana-sha256-hasher"
+version = "2.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5aa3feb32c28765f6aa1ce8f3feac30936f16c5c3f7eb73d63a5b8f6f8ecdc44"
+dependencies = [
+ "sha2",
+ "solana-define-syscall",
+ "solana-hash",
 ]
 
 [[package]]

@@ -3,7 +3,7 @@
 //! This crate does not run on chain. Contract programs and their interfaces
 //! remain separate workspace members.
 
-pub use allowit_client_core::{config, error, output};
+pub use allowit_sdk::client::{config, error, output};
 
 pub mod paysh;
 

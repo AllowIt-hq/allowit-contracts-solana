@@ -1,5 +1,5 @@
 //! Typed library facade for service vendors. It does not invoke a CLI or backend.
-pub use allowit_service_core::*;
+pub use allowit_sdk::service::*;
 use serde_json::Value;
 use std::sync::Arc;
 

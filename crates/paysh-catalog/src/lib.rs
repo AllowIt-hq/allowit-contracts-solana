@@ -1,5 +1,5 @@
 //! Operator-adopted discovery metadata. It grants no payment or execution authority.
-use allowit_service_core::{Result, fault};
+use allowit_sdk::service::{Result, fault};
 use serde_json::Value;
 
 pub fn operator_catalog() -> Result<Value> {

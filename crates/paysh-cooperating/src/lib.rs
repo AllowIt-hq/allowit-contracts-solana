@@ -1,5 +1,5 @@
 //! Fixed-origin transport for the cooperating PaySH gateway protocol.
-use allowit_service_core::{Result, bad, fault};
+use allowit_sdk::service::{Result, bad, fault};
 use reqwest::{blocking::Client, redirect::Policy as RedirectPolicy};
 use serde_json::{Value, json};
 use std::{io::Read, time::Duration};

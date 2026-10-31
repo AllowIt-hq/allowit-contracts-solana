@@ -1,4 +1,4 @@
-use allowit_service_core::rpc::Operation;
+use allowit_sdk::service::rpc::Operation;
 use serde_json::{Value, json};
 pub fn is_read_method(method: &str) -> bool {
     matches!(
@@ -183,6 +183,6 @@ impl Request {
 }
 
 /// Preserve the rail's existing temporary-read refusal classification.
-pub fn is_temporary_read_refusal(error: &allowit_service_transport::rpc::Error) -> bool {
+pub fn is_temporary_read_refusal(error: &allowit_sdk::transport::rpc::Error) -> bool {
     error.is_well_formed_refusal() && matches!(error.rpc_code, Some(-32002 | -32005))
 }

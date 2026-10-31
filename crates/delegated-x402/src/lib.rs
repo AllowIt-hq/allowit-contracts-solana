@@ -9,7 +9,7 @@ use allowit_native::{
     crypto::{Key, verify},
     transaction::{Instruction, Meta, Transaction},
 };
-use allowit_service_core::{Error, Result, coded};
+use allowit_sdk::service::{Error, Result, coded};
 use base64::{Engine as _, engine::general_purpose::STANDARD};
 use reqwest::{Url, blocking::Client};
 use serde::{Deserialize, Serialize};
@@ -636,7 +636,7 @@ impl DelegatedX402 {
     pub fn action_hash(&self, plan: &UnsignedDelegatedPayment) -> Result<String> {
         self.validate_plan(plan)?;
         let encoded = serde_json::to_vec(plan).map_err(|_| invalid("Invalid payment plan."))?;
-        Ok(allowit_service_core::hash(encoded))
+        Ok(allowit_sdk::service::hash(encoded))
     }
 
     /// Future v2 owner reviews bind every economic and request fact, including
@@ -659,7 +659,7 @@ impl DelegatedX402 {
             "plan":normalized,
         }))
         .map_err(|_| invalid("Invalid economic payment commitment."))?;
-        Ok(allowit_service_core::hash(encoded))
+        Ok(allowit_sdk::service::hash(encoded))
     }
 
     /// Verify a host-signer result and build the complete standard outer payload.
@@ -1088,7 +1088,7 @@ mod economic_commitment_tests {
         );
         assert_eq!(
             transport.action_hash(&original).unwrap(),
-            allowit_service_core::hash(serde_json::to_vec(&original).unwrap())
+            allowit_sdk::service::hash(serde_json::to_vec(&original).unwrap())
         );
         assert_eq!(original.blockhash, Key([11; 32]).to_string());
         assert_eq!(original.last_valid_block_height, 1234);
