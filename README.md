@@ -217,7 +217,7 @@ The [`Solana runtime smoke`](.github/workflows/integration-runtime.yml) workflow
 Pull requests run the portable policy checks and `scripts/build.sh` ([`contracts.yml`](.github/workflows/contracts.yml)) and, when touched, the Node native SDK ([`native.yml`](.github/workflows/native.yml)) and the mandate program ([`mandate.yml`](.github/workflows/mandate.yml)). The compiled-program suites run nightly and on demand. Before you open a PR:
 
 ```sh
-scripts/build.sh                             # fail on a stale allowit-sdk pin, then build the workspace and the SBF programs
+ALLOWIT_SOLANA_NETWORK=devnet scripts/build.sh   # fail on a stale allowit-sdk pin, then build the workspace and the SBF programs
 python3 scripts/check-policy.py
 cargo fmt --all --check
 cargo fmt --manifest-path sbf-tests/Cargo.toml --check
