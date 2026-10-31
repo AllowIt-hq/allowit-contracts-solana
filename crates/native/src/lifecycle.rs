@@ -383,7 +383,11 @@ fn reconcile_saved_record(
                 } else if record.method == "deploy" {
                     state.is_none()
                 } else {
+                    // A closed and recreated vault resets its nonce and revision.
+                    // Equal counters prove nonexecution only for the signed instance.
                     state.as_ref().is_some_and(|s| {
+                        record.instance_slot.as_deref() == Some(s.instance_slot.as_str())
+                    }) && state.as_ref().is_some_and(|s| {
                         if record.method == "execute" {
                             Some(&s.nonce) == record.nonce.as_ref()
                         } else {

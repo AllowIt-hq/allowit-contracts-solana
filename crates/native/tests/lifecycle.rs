@@ -842,6 +842,39 @@ fn lost_response_keeps_exact_proof_blocks_new_spend_and_never_resigns() {
     assert_eq!(f.rpc.data.lock().unwrap().sends.len(), 2);
 }
 #[test]
+fn expiry_keeps_uncertainty_when_the_vault_was_recreated_with_a_reset_nonce() {
+    let f = Fixture::new();
+    let count = AtomicUsize::new(0);
+    let record = f
+        .submit("execute", &f.options("1"), "recreated-request-001", &count)
+        .unwrap();
+    assert_eq!(record.instance_slot.as_deref(), Some("77"));
+    {
+        // The payment landed, its signature history is gone, and the vault PDA
+        // was closed and recreated: the nonce matches again in a new instance.
+        let mut d = f.rpc.data.lock().unwrap();
+        d.height = 101;
+        d.block_height = 101;
+        d.instance_slot = 95;
+    }
+    let observed = f
+        .life()
+        .recover(&record.id, &f.policy, f.owner.public_key())
+        .unwrap();
+    assert_eq!(observed.status, "uncertain");
+    assert!(observed.expired());
+    assert!(!observed.extra.contains_key("decisionCode"));
+    assert!(!observed.extra.contains_key("absence"));
+    assert!(
+        f.submit("execute", &f.options("1"), "recreated-request-002", &count)
+            .err()
+            .unwrap()
+            .message
+            .contains("uncertain")
+    );
+    assert_eq!(f.rpc.data.lock().unwrap().sends.len(), 1);
+}
+#[test]
 fn expiry_needs_coherent_height_and_unchanged_nonce_even_after_revision() {
     let f = Fixture::new();
     let count = AtomicUsize::new(0);
