@@ -22,7 +22,8 @@ env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: "1"
 jobs:
-  mandate:
+  # Pull requests run formatting, host tests and an SBF test compile only.
+  check:
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     env:
@@ -43,6 +44,23 @@ jobs:
           cargo fmt --manifest-path programs/mandate/sbf-tests/Cargo.toml --check
           cargo test --locked --manifest-path programs/mandate/Cargo.toml
           ALLOWIT_SOLANA_NETWORK=testnet cargo test --locked --manifest-path programs/mandate/Cargo.toml --test testnet
+          cargo test --locked --manifest-path programs/mandate/sbf-tests/Cargo.toml --no-run
+  # The Agave download, SBF build and real-SBF runtime tests run nightly and on demand.
+  sbf:
+    if: github.event_name != 'pull_request'
+    needs: check
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      ALLOWIT_SOLANA_NETWORK: devnet
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.98.0
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            programs/mandate -> target
+            programs/mandate/sbf-tests -> target
       - name: Install checksum-pinned official Agave tooling
         shell: bash
         run: |
