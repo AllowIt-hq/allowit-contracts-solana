@@ -10,6 +10,7 @@ export interface PolicyOptions {amount?:string;recipient?:string;additionalOwner
 export interface Operation {id:string;status:'uncertain'|'submitted'|'settled'|'failed';method:PolicyMethod;signature:string;transactionUrl:string;replayed?:boolean;[key:string]:unknown;}
 export interface Journal {read(name:string):Promise<any>;write(name:string,value:any):Promise<any>;clear(name:string):Promise<any>;locked<T>(run:()=>Promise<T>):Promise<T>;}
 export class NativePolicySDK {constructor(config?:SDKConfig);config:SDKConfig;connection:Connection;generate(prompt:string):Promise<Policy>;checkNetwork():Promise<void>;verifyRelease(recovery?:boolean):Promise<NativeDeployment>;binding(policy:Policy,owner:string,recovery?:boolean):Promise<Binding>;publicBinding(policy:Policy,owner:string):Binding;state(policy:Policy,owner:string,recovery?:boolean,minContextSlot?:number):Promise<VaultState|null>;prepare(policy:Policy,owner:string,method:PolicyMethod,options?:PolicyOptions):Promise<{transaction:Transaction;[key:string]:any}>;instruction(binding:Binding,method:string,fields:any):any;status(signature:string):Promise<any>;transactionURL(signature:string):string;bundle(policy:Policy,owner:string):Promise<any>;skill(policy:Policy,state:VaultState):string;}
+export const RPC_URL:Record<Network,string>;
 export const RELEASE:any;
 export const PROFILE:'solana-native-v1';
 export const MAX_DAILY_UNITS:bigint;

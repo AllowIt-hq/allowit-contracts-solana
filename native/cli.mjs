@@ -25,7 +25,7 @@ async function main(){
  if(Number(process.versions.node.split('.')[0])<22)throw Error('Node >=22 is required');
  let context=null;try{context=JSON.parse(await readFile(stateDirectory+'/context.json','utf8'));}catch(e){if(e.code!=='ENOENT')throw Error('Unreadable policy context');}
 if(context){for(const [name,value]of [['ALLOWIT_NETWORK',context.network],['ALLOWIT_MINT',context.mint],['ALLOWIT_EXECUTOR',context.executor]])if(process.env[name]&&process.env[name]!==value)throw Error('Environment '+name+' differs from the imported policy context');}
-sdk=new NativePolicySDK({network:process.env.ALLOWIT_NETWORK??context?.network??'solana:testnet',rpcUrl:process.env.ALLOWIT_RPC_URL??(context?.network==='solana:devnet'?'https://api.devnet.solana.com':'https://api.testnet.solana.com'),mint:process.env.ALLOWIT_MINT??context?.mint,executor:process.env.ALLOWIT_EXECUTOR??context?.executor,deployment:context?.deployment});
+sdk=new NativePolicySDK({network:process.env.ALLOWIT_NETWORK??context?.network??'solana:testnet',rpcUrl:process.env.ALLOWIT_RPC_URL,mint:process.env.ALLOWIT_MINT??context?.mint,executor:process.env.ALLOWIT_EXECUTOR??context?.executor,deployment:context?.deployment});
 
  if(command==='import'){
   if(clean.length!==1)throw Error('policy import takes one executor.json path');const bundle=JSON.parse(await readFile(clean[0],'utf8'));

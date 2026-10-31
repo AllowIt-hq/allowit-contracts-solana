@@ -19,6 +19,12 @@ test('amounts never pass through floats and native ABI matches Borsh golden byte
  const ix=encodeInstruction('transfer',{amount:1n,nonce:2n,revision:3n});assert.equal(Buffer.from(ix).toString('hex'),'04010000000000000002000000000000000300000000000000');
  const state=Buffer.alloc(320);state[0]=1;state[298]=1;state.writeBigUInt64LE(5000000n,258);assert.equal(decodeState(state).dailyLimit,'5000000');state[299]=1;assert.throws(()=>decodeState(state),/state/);
 });
+test('default RPC endpoint follows the resolved network; an explicit endpoint wins',()=>{
+ assert.equal(new NativePolicySDK({network:'solana:devnet',rpcUrl:undefined}).config.rpcUrl,'https://api.devnet.solana.com');
+ assert.equal(new NativePolicySDK({network:undefined}).config.rpcUrl,'https://api.testnet.solana.com');
+ assert.equal(new NativePolicySDK({network:'solana:devnet',rpcUrl:'http://127.0.0.1:8899'}).config.rpcUrl,'http://127.0.0.1:8899');
+ assert.equal(new NativePolicySDK({network:'solana:devnet'}).connection.rpcEndpoint,'https://api.devnet.solana.com');
+});
 test('wrong genesis refuses signing before release lookup',async()=>{const s=new NativePolicySDK({connection:{getGenesisHash:async()=> 'wrong'}});await assert.rejects(s.checkNetwork(),/genesis/);});
 class MemoryJournal{values=new Map();async read(n){return structuredClone(this.values.get(n)??null);}async write(n,v){this.values.set(n,structuredClone(v));}async clear(n){this.values.delete(n);}async locked(f){return f();}}
 async function fixture(){
