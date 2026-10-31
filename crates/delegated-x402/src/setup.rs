@@ -3,7 +3,7 @@ use allowit_native::{
     client::{ATA_PROGRAM, TOKEN_PROGRAM},
     crypto::Key,
 };
-use allowit_service_core::{Error, Result, bad, fault};
+use allowit_sdk::service::{Error, Result, bad, fault};
 
 const COMPUTE: &str = "ComputeBudget111111111111111111111111111111";
 const MEMO: &str = "MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr";

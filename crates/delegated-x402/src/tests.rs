@@ -536,7 +536,7 @@ fn old_fixed_endpoint_serialization_and_action_hash_are_unchanged() {
     assert_eq!(serde_json::to_vec(&restored).unwrap(), legacy_bytes);
     assert_eq!(
         transport.action_hash(&restored).unwrap(),
-        allowit_service_core::hash(&legacy_bytes)
+        allowit_sdk::service::hash(&legacy_bytes)
     );
     let mut explicit_false = serde_json::to_value(&original).unwrap();
     explicit_false["endpoint"]["feePayerFromChallenge"] = json!(false);

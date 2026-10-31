@@ -1,5 +1,5 @@
 //! External air-quality service adapter. Wallet and purchase state stay in the coordinator.
-use allowit_service_core::*;
+use allowit_sdk::service::*;
 use reqwest::{blocking::Client, redirect::Policy as RedirectPolicy};
 use serde_json::{Value, json};
 use std::{io::Read, time::Duration};

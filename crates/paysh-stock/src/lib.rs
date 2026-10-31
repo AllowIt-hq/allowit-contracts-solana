@@ -6,8 +6,8 @@ use allowit_native::{
     rpc::{Rpc as NativeRpc, account},
     transaction::{Instruction, Meta},
 };
-use allowit_service_core::{Error, Result, fault};
-use allowit_service_transport::{
+use allowit_sdk::service::{Error, Result, fault};
+use allowit_sdk::transport::{
     http::{HttpClient, Method, Request},
     rpc::Options,
 };
