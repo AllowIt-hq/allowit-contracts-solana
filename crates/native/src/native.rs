@@ -379,6 +379,8 @@ pub struct Prepared {
     pub simulation: Simulation,
     pub nonce: Option<String>,
     pub revision: Option<String>,
+    /// Instance slot of the vault state that supplied `nonce` and `revision`.
+    pub instance_slot: Option<String>,
     pub last_valid_block_height: u64,
     pub blockhash: Key,
 }
@@ -464,6 +466,7 @@ impl NativeClient {
         }
         let nonce = s.as_ref().map(|s| s.nonce.clone());
         let revision = s.as_ref().map(|s| s.revision.clone());
+        let instance_slot = s.as_ref().map(|s| s.instance_slot.clone());
         if method == "deploy" {
             if s.is_some() {
                 return Err(Error::config(
@@ -578,6 +581,7 @@ impl NativeClient {
             simulation,
             nonce,
             revision,
+            instance_slot,
             last_valid_block_height,
             blockhash,
         })

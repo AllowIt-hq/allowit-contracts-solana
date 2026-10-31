@@ -19,6 +19,12 @@ test('amounts never pass through floats and native ABI matches Borsh golden byte
  const ix=encodeInstruction('transfer',{amount:1n,nonce:2n,revision:3n});assert.equal(Buffer.from(ix).toString('hex'),'04010000000000000002000000000000000300000000000000');
  const state=Buffer.alloc(320);state[0]=1;state[298]=1;state.writeBigUInt64LE(5000000n,258);assert.equal(decodeState(state).dailyLimit,'5000000');state[299]=1;assert.throws(()=>decodeState(state),/state/);
 });
+test('default RPC endpoint follows the resolved network; an explicit endpoint wins',()=>{
+ assert.equal(new NativePolicySDK({network:'solana:devnet',rpcUrl:undefined}).config.rpcUrl,'https://api.devnet.solana.com');
+ assert.equal(new NativePolicySDK({network:undefined}).config.rpcUrl,'https://api.testnet.solana.com');
+ assert.equal(new NativePolicySDK({network:'solana:devnet',rpcUrl:'http://127.0.0.1:8899'}).config.rpcUrl,'http://127.0.0.1:8899');
+ assert.equal(new NativePolicySDK({network:'solana:devnet'}).connection.rpcEndpoint,'https://api.devnet.solana.com');
+});
 test('wrong genesis refuses signing before release lookup',async()=>{const s=new NativePolicySDK({connection:{getGenesisHash:async()=> 'wrong'}});await assert.rejects(s.checkNetwork(),/genesis/);});
 class MemoryJournal{values=new Map();async read(n){return structuredClone(this.values.get(n)??null);}async write(n,v){this.values.set(n,structuredClone(v));}async clear(n){this.values.delete(n);}async locked(f){return f();}}
 async function fixture(){
@@ -51,6 +57,40 @@ test('expired execute releases only with coherent unchanged nonce even after rev
 
 test('amount spelling does not change operation identity',async()=>{const {intentFor}=await import('../lifecycle.mjs');const p=await sdk.generate('Spend up to 5 test tokens per day'),o=owner.publicKey.toBase58();assert.equal(intentFor(sdk,p,o,'fund',{amount:'2'}),intentFor(sdk,p,o,'fund',{amount:'2.0'}));const bundle=await sdk.bundle(p,o);assert.equal(bundle.context.owner,o);assert.equal(bundle.policy.id,p.id);assert.equal(bundle.context.policyId,p.id);assert(!JSON.stringify(bundle).includes('secretKey'));});
 
+test('a crash between journal writes never permits a second fund, withdrawal or spend',async()=>{
+ const {createAssociatedTokenAccountIdempotentInstruction,getAssociatedTokenAddressSync}=await import('../token.mjs');
+ for(const method of ['execute','fund','withdraw'])for(const crashAt of [1,2,3]){
+  const f=await fixture(),o=owner.publicKey.toBase58(),b=f.s.publicBinding(f.p,o),options=method==='execute'?{recipient:o,amount:'1'}:{amount:'1'};
+  if(method!=='execute')f.s.prepare=async()=>{const dest=getAssociatedTokenAddressSync(new PublicKey(b.mint),owner.publicKey),tx=new Transaction({feePayer:owner.publicKey,blockhash:Keypair.generate().publicKey.toBase58(),lastValidBlockHeight:100}).add(...(method==='fund'?[f.s.instruction(b,'deposit',{amount:1000000n,source:dest.toBase58()})]:[createAssociatedTokenAccountIdempotentInstruction(owner.publicKey,dest,owner.publicKey,new PublicKey(b.mint)),f.s.instruction(b,'withdraw',{amount:1000000n,destination:dest.toBase58()})]));return {transaction:tx,blockhash:tx.recentBlockhash,lastValidBlockHeight:100,nonce:'0',revision:'1'};};
+  const sign=async tx=>{tx.sign(method==='execute'?executor:owner);return tx;};
+  // The process stops at the crashAt-th journal write of the first submit.
+  let writes=0;const write=f.journal.write.bind(f.journal);f.journal.write=async(n,v)=>{if(++writes===crashAt)throw Error('crash');return write(n,v);};
+  await assert.rejects(new PolicyLifecycle(f.s,f.journal,sign).submit(f.p,o,method,options,'crashed-'+method),/crash/);
+  f.journal.write=write;
+  const life=new PolicyLifecycle(f.s,f.journal,sign),second=life.submit(f.p,o,method,options,'second-'+method);
+  // A durable signed proof can still be broadcast by a retry, so it must block another operation.
+  if(await f.journal.read('request-crashed-'+method))await assert.rejects(second,/uncertain/,`${method} crash at write ${crashAt}`);
+  else assert.equal((await second).status,'uncertain',`${method} crash at write ${crashAt}`);
+ }
+});
+test('a crash during an authorized additional owner operation keeps the earlier guard',async()=>{
+ const {getAssociatedTokenAddressSync}=await import('../token.mjs');
+ for(const crashAt of [1,2,3,4]){
+  const f=await fixture(),o=owner.publicKey.toBase58(),b=f.s.publicBinding(f.p,o),source=getAssociatedTokenAddressSync(new PublicKey(b.mint),owner.publicKey).toBase58();
+  const fund=(amount,height)=>{const tx=new Transaction({feePayer:owner.publicKey,blockhash:Keypair.generate().publicKey.toBase58(),lastValidBlockHeight:height}).add(f.s.instruction(b,'deposit',{amount,source}));tx.sign(owner);return tx;};
+  const tx=fund(1000000n,100),intent=(await import('../lifecycle.mjs')).intentFor(f.s,f.p,o,'fund',{amount:'1'});
+  await f.journal.write('request-expired-fund',{id:'expired-fund',intent,method:'fund',status:'uncertain',signature:base58(tx.signature),signedBytes:tx.serialize().toString('base64'),blockhash:tx.recentBlockhash,lastValidBlockHeight:100,revision:'1',nonce:'0'});
+  await f.journal.write('owner-slot-fund',{id:'expired-fund'});
+  f.s.connection.getBlockHeight=async()=>101;f.s.connection.getSlot=async()=>99;f.s.connection.getBlock=async()=>({blockHeight:101});f.s.state=async()=>({revision:'1',nonce:'0'});
+  f.s.prepare=async()=>{const tx=new Transaction({feePayer:owner.publicKey,blockhash:Keypair.generate().publicKey.toBase58(),lastValidBlockHeight:200}).add(f.s.instruction(b,'deposit',{amount:2000000n,source}));return {transaction:tx,blockhash:tx.recentBlockhash,lastValidBlockHeight:200,nonce:'0',revision:'1'};};
+  const sign=async tx=>{tx.sign(owner);return tx;};
+  let writes=0;const write=f.journal.write.bind(f.journal);f.journal.write=async(n,v)=>{if(++writes===crashAt)throw Error('crash');return write(n,v);};
+  await assert.rejects(new PolicyLifecycle(f.s,f.journal,sign).submit(f.p,o,'fund',{amount:'2',additionalOwnerOperation:true},'additional-fund'),/crash/);
+  f.journal.write=write;
+  // Without explicit authorization, neither the expired proof nor a durable successor may be bypassed.
+  await assert.rejects(new PolicyLifecycle(f.s,f.journal,sign).submit(f.p,o,'fund',{amount:'3'},'third-fund-01'),/Earlier fund is uncertain/,`crash at write ${crashAt}`);
+ }
+});
 test('coherent expiry releases revoke/tune/deploy but never infers fund or withdrawal absence',async()=>{
  const {createAssociatedTokenAccountIdempotentInstruction,getAssociatedTokenAddressSync}=await import('../token.mjs');
  for(const method of ['revoke','tune','deploy','fund','withdraw']){

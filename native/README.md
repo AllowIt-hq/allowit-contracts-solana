@@ -102,7 +102,11 @@ an executor require a gateway with transactional storage before production.
 
 A crashed process may leave `.lock`; after verifying that process has stopped,
 remove only the empty lock directory. Keep all signed request files. Never
-clear a request to work around an unknown outcome. Local files must remain
+clear a request to work around an unknown outcome.
+The lifecycle writes each guard before its signed request record, and both
+before broadcast. A crash between these writes leaves a guard without a record.
+Nothing was broadcast, so the next operation removes that guard or restores the
+guard that it replaced. Local files must remain
 private. Neither source artifacts nor SKILL.md contain a signing key.
 
 ## Browser integration

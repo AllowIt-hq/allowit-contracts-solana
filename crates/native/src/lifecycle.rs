@@ -16,6 +16,9 @@ use base64::Engine;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
+/// Private journal key for the vault instance observed with an owner
+/// mutation's signed revision. Owner mutations do not sign their instance.
+const OBSERVED_INSTANCE_SLOT: &str = "observedInstanceSlot";
 #[derive(Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct Intent {
@@ -271,6 +274,8 @@ pub fn reconcile_record(
 /// witness. Never use a bound supplied by the browser, executor, or imported record.
 /// This clears imported status and absence metadata, then checks current finalized
 /// chain evidence and unchanged execution state before declaring nonexecution.
+/// Only an execute signs its vault instance, so only an execute can be declared
+/// unexecuted here. Owner mutations, deploys and fund/withdraw/close stay uncertain.
 /// It never signs or broadcasts. The returned record preserves the original height.
 pub fn reconcile_record_with_expiry_bound(
     sdk: &dyn NativeOperations,
@@ -305,6 +310,13 @@ fn reconcile_saved_record(
         record.method.as_str(),
         "revoke" | "withdraw" | "close"
     ))?;
+    if record.extra.get("absence").and_then(|a| a["kind"].as_str()) == Some("expired-deploy") {
+        // Earlier releases inferred deploy absence from a missing vault, which a
+        // later close also produces. Drop that marker and observe again.
+        record.extra.remove("absence");
+        record.extra.remove("decisionCode");
+        record.status = "uncertain".into();
+    }
     if record
         .extra
         .get("absence")
@@ -368,7 +380,13 @@ fn reconcile_saved_record(
                 .transpose()?;
             if let Some(height) = finalized.filter(|h| *h > record.last_valid_block_height) {
                 let state = sdk.state(policy, owner, true, Some(slot))?;
-                if matches!(record.method.as_str(), "fund" | "withdraw" | "close") {
+                // Chain state cannot prove these never ran. An absent vault after a
+                // deploy can also be a deployed vault that the owner closed later.
+                let no_absence_inference = matches!(
+                    record.method.as_str(),
+                    "deploy" | "fund" | "withdraw" | "close"
+                );
+                if no_absence_inference {
                     // Reobserve status after the coherent expiry boundary;
                     // a lagging initial RPC node cannot authorize addition.
                     result = sdk.status(&record.signature)?;
@@ -378,18 +396,33 @@ fn reconcile_saved_record(
                         return Ok(record);
                     }
                 }
-                let unchanged = if matches!(record.method.as_str(), "fund" | "withdraw" | "close") {
-                    false
-                } else if record.method == "deploy" {
-                    state.is_none()
+                // A closed and recreated vault resets its nonce and revision, so
+                // equal counters prove nonexecution only for the same instance.
+                // Execute signs its instance slot. Owner mutations sign only the
+                // revision; use the instance observed with it, which only a
+                // private journal retains (public reconciliation clears `extra`).
+                let instance = if record.method == "execute" {
+                    record.instance_slot.clone()
                 } else {
-                    state.as_ref().is_some_and(|s| {
-                        if record.method == "execute" {
-                            Some(&s.nonce) == record.nonce.as_ref()
-                        } else {
-                            Some(&s.revision) == record.revision.as_ref()
-                        }
-                    })
+                    record
+                        .extra
+                        .get(OBSERVED_INSTANCE_SLOT)
+                        .and_then(Value::as_str)
+                        .map(str::to_owned)
+                };
+                let unchanged = if no_absence_inference {
+                    false
+                } else {
+                    state
+                        .as_ref()
+                        .is_some_and(|s| instance.as_deref() == Some(s.instance_slot.as_str()))
+                        && state.as_ref().is_some_and(|s| {
+                            if record.method == "execute" {
+                                Some(&s.nonce) == record.nonce.as_ref()
+                            } else {
+                                Some(&s.revision) == record.revision.as_ref()
+                            }
+                        })
                 };
                 if unchanged {
                     record.status = "failed".into();
@@ -404,7 +437,7 @@ fn reconcile_saved_record(
                     record.extra.insert("absence".into(), absence);
                     return Ok(record);
                 }
-                if !matches!(record.method.as_str(), "fund" | "withdraw" | "close") {
+                if !no_absence_inference {
                     record.extra.insert("blockhashExpired".into(), json!(true));
                 }
             }
@@ -592,6 +625,9 @@ impl<'a> PolicyLifecycle<'a> {
             let signatures:Vec<_>=supplied.iter().map(|(_,signature)|bs58::encode(signature).into_string()).collect();
             let signature=signatures.first().cloned().ok_or_else(||Error::config("Missing native transaction payer signature"))?;
             let mut record=Record{id:id.clone(),intent:canonical,method:method.into(),status:"uncertain".into(),transaction_url:self.sdk.client().transaction_url(&signature)?,signature,signatures,signed_bytes:base64::engine::general_purpose::STANDARD.encode(raw),blockhash:prepared.blockhash,last_valid_block_height:prepared.last_valid_block_height,nonce:prepared.nonce,revision:prepared.revision,expires_at:options.expires_at,commitment:options.commitment.clone(),instance_slot:options.instance_slot.map(|slot|slot.to_string()),extra:BTreeMap::new()};
+            if matches!(method,"revoke"|"tune"|"tune_action") {
+                if let Some(slot)=&prepared.instance_slot{record.extra.insert(OBSERVED_INSTANCE_SLOT.into(),json!(slot));}
+            }
             validate_record(self.sdk.client(),policy,owner,&record)?;
             self.journal.write(&name,&record)?;
             // Only a durable, validated successor proof can supersede an old

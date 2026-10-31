@@ -6,6 +6,7 @@ export {RELEASE,Transaction};
 const refusal=message=>Object.assign(new Error(message),{code:'POLICY_DENIED'});
 export const PROFILE = 'solana-native-v1';
 export const GENESIS = {'solana:testnet':'4uhcVJyU9pJkvQyS88uRDiswHXSCkY3zQawwpjk2NsNY','solana:devnet':'EtWTRABZaYq6iMfeYKouRu166VU2xqa1wcaWoxPkrZBG'};
+export const RPC_URL = {'solana:testnet':'https://api.testnet.solana.com','solana:devnet':'https://api.devnet.solana.com'};
 export const LOADER = new PublicKey('BPFLoaderUpgradeab1e11111111111111111111111');
 export const MAX_DAILY_UNITS = 50_000_000n;
 const key = value => new PublicKey(value);
@@ -54,7 +55,8 @@ export async function boundedAuthor(prompt){
 }
 export class NativePolicySDK{
  constructor(config={}){
-  this.config={network:'solana:testnet',rpcUrl:'https://api.testnet.solana.com',author:boundedAuthor,...config};
+  const network=config.network??'solana:testnet';
+  this.config={author:boundedAuthor,...config,network,rpcUrl:config.rpcUrl??RPC_URL[network]};
   if(!GENESIS[this.config.network])throw Error('Native lifecycle is restricted to explicit Solana test networks');
   this.connection=config.connection??new Connection(this.config.rpcUrl,'finalized');
  }
