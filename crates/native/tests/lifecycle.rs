@@ -6,7 +6,7 @@ use allowit_native::{
     journal::FileJournal,
     lifecycle::{
         AuthorizedExecution, NativeOperations, PolicyLifecycle, Record, intent_for,
-        reconcile_record, validate_record,
+        reconcile_record, reconcile_record_with_expiry_bound, validate_record,
     },
     native::{
         ApprovalCommitment, ApprovalRequest, ExecutionRequestIdentity, Options, Prepared,
@@ -765,6 +765,7 @@ impl NativeOperations for Fixture {
             },
             nonce: Some(d.nonce.clone()),
             revision: Some(d.revision.clone()),
+            instance_slot: d.state_present.then(|| d.instance_slot.to_string()),
             last_valid_block_height: 100,
             blockhash,
         })
@@ -873,6 +874,137 @@ fn expiry_keeps_uncertainty_when_the_vault_was_recreated_with_a_reset_nonce() {
             .contains("uncertain")
     );
     assert_eq!(f.rpc.data.lock().unwrap().sends.len(), 1);
+}
+fn owner_mutation_options(method: &str) -> Options {
+    Options {
+        amount: (method != "revoke").then(|| "2".into()),
+        ..Options::default()
+    }
+}
+#[test]
+fn owner_mutation_expiry_uses_the_instance_observed_with_its_revision() {
+    for method in ["revoke", "tune", "tune_action"] {
+        let f = Fixture::new();
+        let count = AtomicUsize::new(0);
+        let record = f
+            .submit(
+                method,
+                &owner_mutation_options(method),
+                "owner-mutation-001",
+                &count,
+            )
+            .unwrap();
+        assert_eq!(record.instance_slot, None);
+        assert_eq!(record.extra["observedInstanceSlot"], "77");
+        {
+            let mut d = f.rpc.data.lock().unwrap();
+            d.height = 101;
+            d.block_height = 101;
+        }
+        let expired = f
+            .life()
+            .recover(&record.id, &f.policy, f.owner.public_key())
+            .unwrap();
+        assert_eq!(expired.status, "failed", "{method}");
+        assert_eq!(expired.extra["decisionCode"], "EXPIRED_UNEXECUTED");
+        assert_eq!(expired.extra["absence"]["revision"], "1");
+    }
+}
+#[test]
+fn owner_mutation_expiry_stays_uncertain_for_a_recreated_vault_or_public_reconciliation() {
+    for method in ["revoke", "tune", "tune_action"] {
+        let f = Fixture::new();
+        let count = AtomicUsize::new(0);
+        let record = f
+            .submit(
+                method,
+                &owner_mutation_options(method),
+                "owner-mutation-002",
+                &count,
+            )
+            .unwrap();
+        {
+            let mut d = f.rpc.data.lock().unwrap();
+            d.height = 101;
+            d.block_height = 101;
+        }
+        // Public reconciliation discards the private observed instance.
+        let public = reconcile_record_with_expiry_bound(
+            &f,
+            record.clone(),
+            &f.policy,
+            f.owner.public_key(),
+            100,
+        )
+        .unwrap();
+        assert_eq!(public.status, "uncertain", "{method}");
+        assert!(public.expired());
+        assert!(!public.extra.contains_key("absence"));
+        // A recreated vault can repeat the signed revision in a new instance.
+        f.rpc.data.lock().unwrap().instance_slot = 95;
+        let recreated = f
+            .life()
+            .recover(&record.id, &f.policy, f.owner.public_key())
+            .unwrap();
+        assert_eq!(recreated.status, "uncertain", "{method}");
+        assert!(recreated.expired());
+        assert!(!recreated.extra.contains_key("decisionCode"));
+        assert!(!recreated.extra.contains_key("absence"));
+    }
+}
+#[test]
+fn expired_deploy_with_an_absent_vault_stays_uncertain() {
+    let f = Fixture::new();
+    let count = AtomicUsize::new(0);
+    let options = Options {
+        amount: Some("1".into()),
+        ..Options::default()
+    };
+    f.rpc.data.lock().unwrap().state_present = false;
+    let record = f
+        .submit("deploy", &options, "deploy-request-001", &count)
+        .unwrap();
+    {
+        // The deploy may have landed and the owner may have closed the vault
+        // since; a missing vault and missing history do not prove absence.
+        let mut d = f.rpc.data.lock().unwrap();
+        d.height = 101;
+        d.block_height = 101;
+    }
+    let observed = f
+        .life()
+        .recover(&record.id, &f.policy, f.owner.public_key())
+        .unwrap();
+    assert_eq!(observed.status, "uncertain");
+    assert!(observed.expired());
+    assert!(!observed.extra.contains_key("decisionCode"));
+    assert!(!observed.extra.contains_key("absence"));
+    // A marker that an earlier release inferred is observed again.
+    let mut legacy = f
+        .journal
+        .read::<Record>("request-deploy-request-001")
+        .unwrap()
+        .unwrap();
+    legacy.status = "failed".into();
+    legacy.extra.remove("blockhashExpired");
+    legacy
+        .extra
+        .insert("decisionCode".into(), json!("EXPIRED_UNEXECUTED"));
+    legacy.extra.insert(
+        "absence".into(),
+        json!({"kind":"expired-deploy","height":101,"slot":99}),
+    );
+    f.journal
+        .write("request-deploy-request-001", &legacy)
+        .unwrap();
+    let rechecked = f
+        .life()
+        .recover(&record.id, &f.policy, f.owner.public_key())
+        .unwrap();
+    assert_eq!(rechecked.status, "uncertain");
+    assert!(rechecked.expired());
+    assert!(!rechecked.extra.contains_key("decisionCode"));
+    assert!(!rechecked.extra.contains_key("absence"));
 }
 #[test]
 fn expiry_needs_coherent_height_and_unchanged_nonce_even_after_revision() {
