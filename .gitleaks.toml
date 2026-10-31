@@ -1,0 +1,10 @@
+# Extends the default rules. The allowlisted value is the public SHA-256 of
+# policy/policy_api.rs at the frozen native receipt, not a credential.
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "Hash-bound policy_api.rs digest in verification/"
+paths = ['''^verification/native-(source-lock|correspondence)\.json$''']
+regexes = ['''^70b783aac1a7d7016ea967cc6d873a91917f6ce3f38b030551f4658923b7793d$''']
+condition = "AND"
