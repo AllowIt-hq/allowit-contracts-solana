@@ -4,4 +4,4 @@ Keep contract implementation, technical build/API documentation and release inpu
 
 # Verification
 
-For changes under `verification/`, run `python3 -m unittest discover -s verification/tests`. Preserve hash-bound inputs. Never re-hash a lock or correspondence file to make a check pass.
+For changes under `verification/`, including documentation, run `python3 -m unittest discover -s verification/tests`. Before changing a verification file, check whether observations, locks or receipts bind its hash, including references from other verification folders. Preserve hash-bound inputs. Never re-hash a lock, receipt or correspondence file to make a check pass.
