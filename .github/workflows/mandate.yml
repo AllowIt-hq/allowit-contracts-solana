@@ -2,6 +2,9 @@ name: Mandate program
 on:
   pull_request:
     paths: ["programs/mandate/**", ".github/workflows/mandate.yml"]
+  push:
+    branches: [main]
+    paths: ["programs/mandate/**", ".github/workflows/mandate.yml"]
   schedule:
     - cron: "17 4 * * *"
   workflow_dispatch:
@@ -22,7 +25,7 @@ env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: "1"
 jobs:
-  # Pull requests run formatting, host tests and an SBF test compile only.
+  # Pull requests and pushes to main run formatting, host tests and an SBF test compile only.
   check:
     runs-on: ubuntu-24.04
     timeout-minutes: 20
@@ -47,7 +50,7 @@ jobs:
           cargo test --locked --manifest-path programs/mandate/sbf-tests/Cargo.toml --no-run
   # The Agave download, SBF build and real-SBF runtime tests run nightly and on demand.
   sbf:
-    if: github.event_name != 'pull_request'
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     needs: check
     runs-on: ubuntu-24.04
     timeout-minutes: 20
