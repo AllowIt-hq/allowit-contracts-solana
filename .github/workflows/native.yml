@@ -23,8 +23,6 @@ jobs:
         with:
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: crates/native -> target
       - run: cargo fmt --manifest-path crates/native/Cargo.toml --check
       - run: cargo test --manifest-path crates/native/Cargo.toml --locked
       - run: cargo test --manifest-path crates/native/Cargo.toml --locked --features serde_json/preserve_order

@@ -39,7 +39,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: |
-            programs/mandate -> target
+            . -> target
             programs/mandate/sbf-tests -> target
       - name: Check native Solana behavior
         run: |
@@ -62,7 +62,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: |
-            programs/mandate -> target
+            . -> target
             programs/mandate/sbf-tests -> target
       - name: Install checksum-pinned official Agave tooling
         shell: bash
